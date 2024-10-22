@@ -135,7 +135,7 @@ mod private_marker {
     /// as RangeBounds (must remain exosive to avoid giving the same error), the error
     /// will disappear.
     ///
-    /// https://stackoverflow.com/questions/39159226/conflicting-implementations-of-trait-in-rust
+    /// <https://stackoverflow.com/questions/39159226/conflicting-implementations-of-trait-in-rust>
     pub trait RangeMarker {}
 
     impl RangeMarker for Range<usize> {}
