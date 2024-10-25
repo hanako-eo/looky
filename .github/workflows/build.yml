@@ -1,0 +1,35 @@
+name: Build and Test
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_and_test:
+    name: Code Build and Test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain:
+          - stable
+          - beta
+          - nightly
+        action:
+          - name: build in debug mode
+            command: build --verbose
+          - name: build in release mode
+            command: build --release --verbose
+          - name: test in debug mode
+            command: test --verbose
+          - name: test in release mode
+            command: test --release --verbose
+
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
+      - name: Run ${{ matrix.action.name }}
+        run: cargo ${{ matrix.action.command }}

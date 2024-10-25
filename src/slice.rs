@@ -23,7 +23,7 @@ impl SliceIndex<Bits> for usize {
     /// Retrieves the self-th bit.
     #[inline]
     fn get(self, slice: &Bits) -> Option<Self::Output> {
-        (self < slice.len()).then(|| (self.index(slice) & (1 << 7 - self % 8)) >> 7 - self % 8)
+        (self < slice.len()).then(|| (self.index(slice) & (1 << (7 - self % 8))) >> (7 - self % 8))
     }
 
     /// Retrieves the byte containing the self-th bit.
@@ -89,7 +89,7 @@ impl<R: RangeBounds<usize> + RangeMarker> SliceIndex<Bits> for R {
         };
 
         if start >= end {
-            return Bits::new_box(&[]);
+            return Bits::new_box([]);
         }
 
         let bytes_size = minimal_bytes_size(end - start);
@@ -110,7 +110,7 @@ impl<R: RangeBounds<usize> + RangeMarker> SliceIndex<Bits> for R {
             // (offset % 8) is the shit from 0b1 to 0b10...0 for the bit in the array
             let shift = (i % 8) as i8 - (offset % 8) as i8;
 
-            let bit = slice.0[i / 8] & 1 << 7 - (i % 8);
+            let bit = slice.0[i / 8] & 1 << (7 - (i % 8));
             bits[offset / 8] |= if shift.is_negative() {
                 bit >> -shift
             } else {
@@ -146,6 +146,7 @@ mod private_marker {
     impl RangeMarker for RangeFull {}
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 

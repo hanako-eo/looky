@@ -1,3 +1,5 @@
+//! Utilities for the manibilation of bits (like with [Bits]).
+
 use core::fmt::Debug;
 use core::mem::transmute;
 use core::ops::{Shl, ShlAssign, Shr, ShrAssign};
@@ -96,7 +98,7 @@ impl Bits {
     /// //                                                      ^^^^ store here
     /// ```
     #[inline]
-    pub fn get<I: SliceIndex<Self>>(&self, index: I) -> Option<<I as SliceIndex<Self>>::Output> {
+    pub fn get<I: SliceIndex<Self>>(&self, index: I) -> Option<I::Output> {
         index.get(self)
     }
 }
@@ -182,6 +184,7 @@ macro_rules! shift_left_bits {
             /// assert_eq!(bits, Bits::new(&[0b00011111, 0b11100000]));
             /// ```
             fn shl_assign(&mut self, shift: $type) {
+                #![allow(unused_comparisons)]
                 assert!(shift >= 0, "the shift left parameter cannot be negative");
 
                 let byte_shift = (shift / 8) as usize;
@@ -267,6 +270,7 @@ macro_rules! shift_right_bits {
             /// assert_eq!(bits, Bits::new(&[0b00000111, 0b11111000]));
             /// ```
             fn shr_assign(&mut self, shift: $type) {
+                #![allow(unused_comparisons)]
                 assert!(shift >= 0, "the shift right parameter cannot be negative");
 
                 let byte_shift = (shift / 8) as usize;
@@ -309,7 +313,7 @@ impl<'s> From<&'s mut [u8]> for &'s mut Bits {
     }
 }
 
-impl<'s> From<Box<[u8]>> for Box<Bits> {
+impl From<Box<[u8]>> for Box<Bits> {
     #[inline]
     fn from(value: Box<[u8]>) -> Self {
         // SAFETY: Bits is just a wrapper around [u8].
@@ -338,6 +342,7 @@ impl From<&Bits> for Box<Bits> {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 
