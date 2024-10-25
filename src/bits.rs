@@ -1,6 +1,6 @@
 use core::fmt::Debug;
 use core::mem::transmute;
-use core::ops::{Shl, ShlAssign};
+use core::ops::{Shl, ShlAssign, Shr, ShrAssign};
 
 use crate::slice::SliceIndex;
 
@@ -124,82 +124,176 @@ impl Debug for Bits {
     }
 }
 
-impl Shl<usize> for &Bits {
-    type Output = Box<Bits>;
+macro_rules! shift_left_bits {
+    ($($type:ty),*) => {$(
+        impl Shl<$type> for &Bits {
+            type Output = Box<Bits>;
 
-    /// Performs the `<<` operation.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use looky::bits::Bits;
-    ///
-    /// let bits = Bits::new(&[0b00001111, 0b11110000]);
-    /// assert_eq!(bits << 1, Bits::new_box(&[0b00011111, 0b11100000]));
-    /// ```
-    fn shl(self, shift: usize) -> Self::Output {
-        let mut bits = Bits::into_box(self);
-        *bits <<= shift;
-        bits
-    }
-}
+            /// Performs the `<<` operation.
+            ///
+            /// # Examples
+            ///
+            /// ```ignore
+            /// use looky::bits::Bits;
+            ///
+            /// let bits = Bits::new(&[0b00001111, 0b11110000]);
+            /// assert_eq!(bits << 1, Bits::new_box(&[0b00011111, 0b11100000]));
+            /// ```
+            fn shl(self, shift: $type) -> Self::Output {
+                let mut bits = Bits::into_box(self);
+                *bits <<= shift;
+                bits
+            }
+        }
 
-impl Shl<usize> for &mut Bits {
-    type Output = Box<Bits>;
+        impl Shl<$type> for &mut Bits {
+            type Output = Box<Bits>;
 
-    /// Performs the `<<` operation.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use looky::bits::Bits;
-    ///
-    /// let bits = Bits::new(&[0b00001111, 0b11110000]);
-    /// assert_eq!(bits << 1, Bits::new_box(&[0b00011111, 0b11100000]));
-    /// ```
-    #[inline]
-    fn shl(self, shift: usize) -> Self::Output {
-        Shl::shl(&*self, shift)
-    }
-}
+            /// Performs the `<<` operation.
+            ///
+            /// # Examples
+            ///
+            /// ```ignore
+            /// use looky::bits::Bits;
+            ///
+            /// let bits = Bits::new(&[0b00001111, 0b11110000]);
+            /// assert_eq!(bits << 1, Bits::new_box(&[0b00011111, 0b11100000]));
+            /// ```
+            #[inline]
+            fn shl(self, shift: $type) -> Self::Output {
+                Shl::shl(&*self, shift)
+            }
+        }
 
-impl ShlAssign<usize> for Bits {
-    /// Performs the `<<=` operation.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use looky::bits::Bits;
-    ///
-    /// // error[E0716]: temporary value dropped while borrowed
-    /// let mut base = [0b00001111, 0b11110000];
-    /// let bits = Bits::from_mut(&mut base);
-    ///
-    /// assert_eq!(bits, Bits::new(&[0b00001111, 0b11110000]));
-    /// *bits <<= 1;
-    /// assert_eq!(bits, Bits::new(&[0b00011111, 0b11100000]));
-    /// ```
-    fn shl_assign(&mut self, shift: usize) {
-        let byte_shift = shift / 8;
-        let bits_shift = shift % 8;
+        impl ShlAssign<$type> for Bits {
+            /// Performs the `<<=` operation.
+            ///
+            /// # Examples
+            ///
+            /// ```ignore
+            /// use looky::bits::Bits;
+            ///
+            /// // error[E0716]: temporary value dropped while borrowed
+            /// let mut base = [0b00001111, 0b11110000];
+            /// let bits = Bits::from_mut(&mut base);
+            ///
+            /// assert_eq!(bits, Bits::new(&[0b00001111, 0b11110000]));
+            /// *bits <<= 1;
+            /// assert_eq!(bits, Bits::new(&[0b00011111, 0b11100000]));
+            /// ```
+            fn shl_assign(&mut self, shift: $type) {
+                assert!(shift >= 0, "the shift left parameter cannot be negative");
 
-        let end = self.byte_len() - byte_shift;
-        for i in 0..end {
-            let byte = self.0.get(i + byte_shift).unwrap_or(&0);
-            // I use a match to avoid a panic "shift right with overflow"
-            self.0[i] = match bits_shift {
-                0 => *byte,
-                _ => {
-                    (byte << bits_shift)
-                        | (self.0.get(i + byte_shift + 1).unwrap_or(&0) >> 8 - bits_shift)
+                let byte_shift = (shift / 8) as usize;
+                let bits_shift = shift % 8;
+
+                let end = self.byte_len() - byte_shift;
+                for i in 0..end {
+                    let byte = self.0.get(i + byte_shift).unwrap_or(&0);
+                    // I use a match to avoid a panic "shift right with overflow"
+                    self.0[i] = match bits_shift {
+                        0 => *byte,
+                        _ => {
+                            (byte << bits_shift)
+                                | (self.0.get(i + byte_shift + 1).unwrap_or(&0) >> 8 - bits_shift)
+                        }
+                    };
                 }
-            };
+                for i in end..self.byte_len() {
+                    self.0[i] = 0;
+                }
+            }
         }
-        for i in end..self.byte_len() {
-            self.0[i] = 0;
-        }
-    }
+    )*};
 }
+
+shift_left_bits! { u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize }
+
+macro_rules! shift_right_bits {
+    ($($type:ty),*) => {$(
+        impl Shr<$type> for &Bits {
+            type Output = Box<Bits>;
+
+            /// Performs the `>>` operation.
+            ///
+            /// # Examples
+            ///
+            /// ```ignore
+            /// use looky::bits::Bits;
+            ///
+            /// let bits = Bits::new(&[0b00001111, 0b11110000]);
+            /// assert_eq!(bits >> 1, Bits::new_box(&[0b00000111, 0b11111000]));
+            /// ```
+            fn shr(self, shift: $type) -> Self::Output {
+                let mut bits = Bits::into_box(self);
+                *bits >>= shift;
+                bits
+            }
+        }
+
+        impl Shr<$type> for &mut Bits {
+            type Output = Box<Bits>;
+
+            /// Performs the `>>` operation.
+            ///
+            /// # Examples
+            ///
+            /// ```ignore
+            /// use looky::bits::Bits;
+            ///
+            /// let bits = Bits::new(&[0b00001111, 0b11110000]);
+            /// assert_eq!(bits >> 1, Bits::new_box(&[0b00000111, 0b11111000]));
+            /// ```
+            #[inline]
+            fn shr(self, shift: $type) -> Self::Output {
+                Shr::shr(&*self, shift)
+            }
+        }
+
+        impl ShrAssign<$type> for Bits {
+            /// Performs the `>>=` operation.
+            ///
+            /// # Examples
+            ///
+            /// ```ignore
+            /// use looky::bits::Bits;
+            ///
+            /// // error[E0716]: temporary value dropped while borrowed
+            /// let mut base = [0b00001111, 0b11110000];
+            /// let bits = Bits::from_mut(&mut base);
+            ///
+            /// assert_eq!(bits, Bits::new(&[0b00001111, 0b11110000]));
+            /// *bits >>= 1;
+            /// assert_eq!(bits, Bits::new(&[0b00000111, 0b11111000]));
+            /// ```
+            fn shr_assign(&mut self, shift: $type) {
+                assert!(shift >= 0, "the shift right parameter cannot be negative");
+
+                let byte_shift = (shift / 8) as usize;
+                let bits_shift = shift % 8;
+
+                let start = byte_shift;
+                for i in (start..self.byte_len()).rev() {
+                    let byte = self.0.get(i - byte_shift).unwrap_or(&0);
+                    // I use a match to avoid a panic "shift left with overflow" and "attempt to subtract with overflow"
+                    self.0[i] = match (bits_shift, i - byte_shift) {
+                        (0, _) => *byte,
+                        (bits_shift, 0) => byte >> bits_shift,
+                        _ => {
+                            (byte >> bits_shift)
+                                | (self.0.get(i - byte_shift - 1).unwrap_or(&0) << 8 - bits_shift)
+                        }
+                    };
+                }
+                for i in 0..start {
+                    self.0[i] = 0;
+                }
+            }
+        }
+    )*};
+}
+
+shift_right_bits! { u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize }
 
 impl<'s> From<&'s [u8]> for &'s Bits {
     #[inline]
@@ -248,7 +342,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shift_by_n_16bits() {
+    fn shl_by_n_16bits() {
         let bits = Bits::new(&[0b00001111, 0b11110000]);
 
         assert_eq!(bits << 1, Bits::new_box(&[0b00011111, 0b11100000]));
@@ -259,7 +353,7 @@ mod tests {
     }
 
     #[test]
-    fn shift_assign_by_n_16bits() {
+    fn shl_assign_by_n_16bits() {
         // error[E0716]: temporary value dropped while borrowed
         let mut base = [0b00001111, 0b11110000];
         let bits = Bits::from_mut(&mut base);
@@ -273,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn shift_by_n_24bits() {
+    fn shl_by_n_24bits() {
         let bits = Bits::new(&[0b00001111, 0b11110000, 0b11111111]);
 
         assert_eq!(
@@ -302,6 +396,65 @@ mod tests {
         );
         assert_eq!(
             bits << 24,
+            Bits::new_box(&[0b00000000, 0b00000000, 0b00000000])
+        );
+    }
+
+    #[test]
+    fn shr_by_n_16bits() {
+        let bits = Bits::new(&[0b00001111, 0b11110000]);
+
+        assert_eq!(bits >> 1, Bits::new_box(&[0b00000111, 0b11111000]));
+        assert_eq!(bits >> 4, Bits::new_box(&[0b00000000, 0b11111111]));
+        assert_eq!(bits >> 7, Bits::new_box(&[0b00000000, 0b00011111]));
+        assert_eq!(bits >> 8, Bits::new_box(&[0b00000000, 0b00001111]));
+        assert_eq!(bits >> 16, Bits::new_box(&[0b00000000, 0b00000000]));
+    }
+
+    #[test]
+    fn shr_assign_by_n_16bits() {
+        // error[E0716]: temporary value dropped while borrowed
+        let mut base = [0b00001111, 0b11110000];
+        let bits = Bits::from_mut(&mut base);
+
+        assert_eq!(bits, Bits::new(&[0b00001111, 0b11110000]));
+        *bits >>= 1;
+        assert_eq!(bits, Bits::new(&[0b00000111, 0b11111000]));
+        *bits >>= 3;
+        assert_eq!(bits, Bits::new(&[0b00000000, 0b11111111]));
+        // and the rest is test with the tests of '>>' (because in internal of '>>' we use '>>=')
+    }
+
+    #[test]
+    fn shr_by_n_24bits() {
+        let bits = Bits::new(&[0b00001111, 0b11110000, 0b11111111]);
+
+        assert_eq!(
+            bits >> 1,
+            Bits::new_box(&[0b00000111, 0b11111000, 0b01111111])
+        );
+        assert_eq!(
+            bits >> 4,
+            Bits::new_box(&[0b00000000, 0b11111111, 0b00001111])
+        );
+        assert_eq!(
+            bits >> 7,
+            Bits::new_box(&[0b00000000, 0b00011111, 0b11100001])
+        );
+        assert_eq!(
+            bits >> 8,
+            Bits::new_box(&[0b00000000, 0b00001111, 0b11110000])
+        );
+        assert_eq!(
+            bits >> 16,
+            Bits::new_box(&[0b00000000, 0b00000000, 0b00001111])
+        );
+        assert_eq!(
+            bits >> 18,
+            Bits::new_box(&[0b00000000, 0b00000000, 0b00000011])
+        );
+        assert_eq!(
+            bits >> 24,
             Bits::new_box(&[0b00000000, 0b00000000, 0b00000000])
         );
     }
