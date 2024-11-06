@@ -1,54 +1,51 @@
 use core::ops::{Bound, RangeBounds};
 
-use private_marker::RangeMarker;
-
-use crate::bits::Bits;
+use crate::bits::BitSlice;
+use crate::marker::RangeMarker;
 
 pub trait SliceIndex<T: ?Sized> {
     /// The output type returned by methods.
     type Output: Sized;
 
-    /// Returns a shared reference to the output at this location, if in
-    /// bounds.
-    fn get(self, slice: &T) -> Option<Self::Output>;
+    /// Returns the output at this location, if in bounds.
+    fn get(self, slice: T) -> Option<Self::Output>;
 
-    /// Returns a shared reference to the output at this location, panicking
-    /// if out of bounds.
-    fn index(self, slice: &T) -> Self::Output;
+    /// Returns the output at this location, can panicking if out of bounds.
+    unsafe fn get_unchecked(self, slice: T) -> Self::Output;
 }
 
-impl SliceIndex<Bits> for usize {
-    type Output = u8;
+impl<'s> SliceIndex<BitSlice<'s>> for usize {
+    type Output = bool;
 
-    /// Retrieves the self-th bit.
+    /// Returns a bool at this location, if in bounds.
+    /// In the case of the locatiohn is out of bounds, it returns `None`.
     #[inline]
-    fn get(self, slice: &Bits) -> Option<Self::Output> {
-        (self < slice.len()).then(|| (self.index(slice) & (1 << (7 - self % 8))) >> (7 - self % 8))
+    fn get(self, slice: BitSlice<'s>) -> Option<Self::Output> {
+        // SAFETY: self it's in the bounds
+        (self < slice.len()).then(|| unsafe { self.get_unchecked(slice) })
     }
 
-    /// Retrieves the byte containing the self-th bit.
+    /// Returns the output at this location, it panic if it's out of bounds.
     #[inline]
-    fn index(self, slice: &Bits) -> Self::Output {
-        slice.0[self / 8]
-    }
-}
+    unsafe fn get_unchecked(self, slice: BitSlice<'s>) -> Self::Output {
+        assert!(
+            self < slice.len(),
+            "<usize as SliceIndex<BitSlice>>::get_unchecked requires that the index is within the slice"
+        );
 
-#[inline]
-const fn minimal_bytes_size(bits: usize) -> usize {
-    bits / 8 + (bits % 8 > 0) as usize
+        let index = self + slice.offset() as usize;
+        slice.get_byte_unchecked(index / 8) & (1 << (7 - index % 8)) != 0
+    }
 }
 
 // To understand the whys ans wherefors of the '+ RangeMarker' go to the
 // definition of RangeMarker.
-impl<R: RangeBounds<usize> + RangeMarker> SliceIndex<Bits> for R {
-    // We need to allocate the memory in the Box because we cannot know in advance
-    // the size of the range, and furthermore for now we cannot pre-alloc at the
-    // compile time because `feature(generic_const_exprs)` is unstable in 1.82.
-    type Output = Box<Bits>;
+impl<'s, R: RangeBounds<usize> + RangeMarker> SliceIndex<BitSlice<'s>> for R {
+    type Output = BitSlice<'s>;
 
     /// Retrieves the self-th bit.
     #[inline]
-    fn get(self, slice: &Bits) -> Option<Self::Output> {
+    fn get(self, slice: BitSlice<'s>) -> Option<Self::Output> {
         let start = match self.start_bound() {
             Bound::Included(index) => *index,
             Bound::Excluded(index) => index + 1,
@@ -61,21 +58,15 @@ impl<R: RangeBounds<usize> + RangeMarker> SliceIndex<Bits> for R {
             Bound::Unbounded => slice.len(),
         };
 
-        if start >= end {
-            // no need to allocate anything
+        if start > end {
             return None;
         }
 
-        (end <= slice.len()).then(|| self.index(slice))
+        (end <= slice.len()).then(|| unsafe { self.get_unchecked(slice) })
     }
 
     /// Retrieves the reference to the byte containing the self-th bit.
-    fn index(self, slice: &Bits) -> Self::Output {
-        // This function calculates an array of bits and copies the slice into
-        // the self interval, doing something like this:
-        // 00000000_0000|0000_00000000_0000|0000_00000000 complete sequence
-        //               ^----------------^ <- range
-
+    unsafe fn get_unchecked(self, slice: BitSlice<'s>) -> Self::Output {
         let start = match self.start_bound() {
             Bound::Included(index) => *index,
             Bound::Excluded(index) => index + 1,
@@ -83,67 +74,36 @@ impl<R: RangeBounds<usize> + RangeMarker> SliceIndex<Bits> for R {
         };
 
         let end = match self.end_bound() {
-            Bound::Included(index) => *index,
-            Bound::Excluded(index) => index - 1,
-            Bound::Unbounded => slice.len() - 1,
+            Bound::Included(index) => index + 1,
+            Bound::Excluded(index) => *index,
+            Bound::Unbounded => slice.len(),
         };
 
-        if start >= end {
-            return Bits::new_box([]);
-        }
+        assert!(
+            start < slice.len(),
+            "range start index {start} out of range for slice of length {}",
+            slice.len()
+        );
+        assert!(
+            end <= slice.len(),
+            "range end index {end} out of range for slice of length {}",
+            slice.len()
+        );
+        assert!(
+            start <= end,
+            "slice index starts at {start} but ends at {end}"
+        );
 
-        let bytes_size = minimal_bytes_size(end - start);
+        let slice_offset = slice.offset() as usize;
+        let size = end - start + slice_offset;
 
-        // Create the array of bytes (init to 0)
-        let mut bits = {
-            let mut bits = Box::<[u8]>::new_uninit_slice(bytes_size);
-            for i in 0..bytes_size {
-                bits[i].write(0);
-            }
-            unsafe { bits.assume_init() }
-        };
+        let start = start + slice_offset;
 
-        // Set the n-th bit of the slice to the m-th bit of the array (`bits`)
-        for i in start..=end {
-            let offset = i - start;
-            // (i % 8) is the shit from 0b10...0 to 0b1 of the bit in the slice
-            // (offset % 8) is the shit from 0b1 to 0b10...0 for the bit in the array
-            let shift = (i % 8) as i8 - (offset % 8) as i8;
+        let offet_bits = (start % 8) as u8;
+        let offet_byte = start / 8;
 
-            let bit = slice.0[i / 8] & 1 << (7 - (i % 8));
-            bits[offset / 8] |= if shift.is_negative() {
-                bit >> -shift
-            } else {
-                bit << shift
-            }
-        }
-
-        bits.into()
+        BitSlice::from_raw(offet_bits, size, slice.as_ptr().add(offet_byte))
     }
-}
-
-mod private_marker {
-    use std::ops::{Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive};
-
-    /// The existence of this private marker is due to the error:
-    /// ```"not rust"
-    /// error[E0119]: conflicting implementations of trait `slice::SliceIndex<Bits>` for type `usize`
-    ///    = note: upstream crates may add a new impl of trait `std::ops::RangeBounds<usize>` for type `usize` in future versions
-    /// ```
-    ///
-    /// and that thanks to this marker, which will be implemented on the same structure
-    /// as RangeBounds (must remain exosive to avoid giving the same error), the error
-    /// will disappear.
-    ///
-    /// <https://stackoverflow.com/questions/39159226/conflicting-implementations-of-trait-in-rust>
-    pub trait RangeMarker {}
-
-    impl RangeMarker for Range<usize> {}
-    impl RangeMarker for RangeFrom<usize> {}
-    impl RangeMarker for RangeTo<usize> {}
-    impl RangeMarker for RangeInclusive<usize> {}
-    impl RangeMarker for RangeToInclusive<usize> {}
-    impl RangeMarker for RangeFull {}
 }
 
 #[cfg(test)]
@@ -152,30 +112,48 @@ mod tests {
 
     #[test]
     fn get_correctly_the_n_th_bit() {
-        let bits = Bits::new(&[0b00100000, 0b11011111]);
+        let bits = BitSlice::new(&[0b00100000, 0b11011111]);
 
-        assert_eq!(bits.get(2), Some(1));
-        assert_eq!(bits.get(10), Some(0));
+        assert_eq!(bits.get(2), Some(true));
+        assert_eq!(bits.get(10), Some(false));
 
         assert_eq!(bits.get(20), None);
-        assert_ne!(bits.get(1), Some(1));
+        assert_ne!(bits.get(1), Some(true));
     }
 
     #[test]
     fn get_correctly_a_range_of_bytes() {
-        let bits = Bits::new(&[0b00100000, 0b11011111]);
+        let bits = BitSlice::new(&[0b00100000, 0b11011111]);
 
-        assert_eq!(bits.get(0..16), Some(Box::from(bits)));
-        assert_eq!(bits.get(0..=15), Some(Box::from(bits)));
-        assert_eq!(bits.get(0..), Some(Box::from(bits)));
+        assert_eq!(bits.get(0..16), Some(bits));
+        assert_eq!(bits.get(0..=15), Some(bits));
+        assert_eq!(bits.get(0..), Some(bits));
+        assert_eq!(bits.get(..), Some(bits));
+        assert_eq!(bits.get(..=15), Some(bits));
+        assert_eq!(bits.get(..16), Some(bits));
 
-        assert_eq!(bits.get(2..4), Some(Box::from(Bits::new(&[0b10000000]))));
-        assert_eq!(bits.get(2..10), Some(Box::from(Bits::new(&[0b10000011]))));
+        assert_eq!(
+            bits.get(2..4),
+            Some(BitSlice::with_size_and_offset(2, 2, &[0b00_10_0000]))
+        );
+        assert_eq!(
+            bits.get(2..10),
+            Some(BitSlice::with_size_and_offset(
+                2,
+                8,
+                &[0b00_100000, 0b11_100000]
+            ))
+        );
         assert_eq!(
             bits.get(2..12),
-            Some(Box::from(Bits::new(&[0b10000011, 0b01000000])))
+            Some(BitSlice::with_size_and_offset(
+                2,
+                10,
+                &[0b00_100000, 0b1101_0000]
+            ))
         );
         assert_eq!(bits.get(2..20), None);
         assert_eq!(bits.get(20..), None);
+        assert_eq!(bits.get(..20), None);
     }
 }
