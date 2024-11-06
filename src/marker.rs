@@ -1,6 +1,4 @@
-use core::ops::{
-    Bound, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
-};
+use core::ops::{Bound, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive};
 
 /// The existence of this private marker is due to the error:
 /// ```"not rust"

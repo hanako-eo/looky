@@ -1,5 +1,5 @@
-pub use slice::BitSlice;
 pub use iter::Iter;
+pub use slice::BitSlice;
 
 mod iter;
 mod slice;

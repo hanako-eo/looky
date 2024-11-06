@@ -8,7 +8,7 @@ use crate::utils::minimal_bytes_size;
 /// BitSlice works like a fat pointer, it describes a byte slice (perhaps seen
 /// as equivalent to a `&[u8]`) but its purpose is to allow bit-by-bit manipulation
 /// of the array.
-/// 
+///
 /// Like other pointer or ref, it can be copy (the heaviest part of the copy will
 /// be in the metadata copy).
 #[derive(Clone, Copy)]
@@ -26,23 +26,60 @@ pub(crate) struct Metadata {
 }
 
 impl<'s> BitSlice<'s> {
+    /// Create a bit slice from a slice.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use looky::bits::BitSlice;
+    ///
+    /// let bits = BitSlice::new(&[0b10101010]);
+    /// ```
     #[inline]
     pub fn new<S: AsRef<[u8]> + ?Sized>(slice: &'s S) -> Self {
         Self::with_offset(0, slice)
     }
 
+    /// Create a bit slice from a slice with a custom offset on the first byte.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use looky::bits::BitSlice;
+    ///
+    /// let bits = BitSlice::with_offset(2, &[0b10101010]);
+    /// //                                        ^ for the BitSlice the first bit is now here
+    /// ```
     #[inline]
     pub fn with_offset<S: AsRef<[u8]> + ?Sized>(bit_offset: u8, slice: &'s S) -> Self {
         let slice = slice.as_ref();
 
-        Self::with_size_and_offset(bit_offset, slice.len() * 8, slice)
+        Self::with_size_and_offset(
+            bit_offset,
+            // we need to do - bit_offset to avoid to leave the base slice
+            slice.len() * 8 - bit_offset as usize,
+            slice,
+        )
     }
 
+    /// Create a bit slice from a slice with a custom size.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use looky::bits::BitSlice;
+    ///
+    /// let bits = BitSlice::with_size(4, &[0b10101010]);
+    /// //                                         ^ for the BitSlice the last bit of the slice is here
+    /// ```
     #[inline]
     pub fn with_size<S: AsRef<[u8]> + ?Sized>(size: usize, slice: &'s S) -> Self {
         Self::with_size_and_offset(0, size, slice)
     }
 
+    /// Create a bit slice from a slice with a custom size and offet.
+    /// Refer to [`Self::with_size`] and [`Self::with_offset`] to understand
+    /// the meaning of size and offset.
     #[inline]
     pub fn with_size_and_offset<S: AsRef<[u8]> + ?Sized>(
         bit_offset: u8,
@@ -51,12 +88,19 @@ impl<'s> BitSlice<'s> {
     ) -> Self {
         let slice = slice.as_ref();
 
-        debug_assert!(bit_offset < 8 && size <= slice.len() * 8);
+        debug_assert!(bit_offset < 8 && size + bit_offset as usize <= slice.len() * 8);
 
         // SAFETY: all args are checked before
         unsafe { Self::from_raw(bit_offset, size, slice.as_ptr()) }
     }
 
+    /// Create a bit slice from a pointer to the "first byte" with a custom
+    /// size and offet.
+    /// Refer to [`Self::with_size`] and [`Self::with_offset`] to understand
+    /// the meaning of size and offset.
+    ///
+    /// # Safety
+    /// When the method is called, the pointer must not be a dangling pointer.  
     #[inline]
     pub unsafe fn from_raw(bit_offset: u8, size: usize, ptr: *const u8) -> Self {
         Self {
@@ -138,14 +182,14 @@ impl<'s> BitSlice<'s> {
     }
 
     /// Returns a raw pointer to the slice’s buffer.
-    /// 
+    ///
     /// The caller must ensure that the slice outlives the pointer this function
     /// returns, or else it will end up dangling.
-    /// 
+    ///
     /// The caller must also ensure that the memory the pointer (non-transitively)
     /// points to is never written to (except inside an UnsafeCell) using this
     /// pointer or any pointer derived from it.
-    /// 
+    ///
     /// Modifying the container referenced by this slice may cause its buffer
     /// to be reallocated, which would also make any pointers to it invalid.
     #[inline]
@@ -154,19 +198,25 @@ impl<'s> BitSlice<'s> {
     }
 
     /// Get the origin slice store in the bit slice.
-    /// 
+    ///
+    /// # Safety
+    /// When calling
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// use looky::bits::BitSlice;
     ///
     /// let bits = BitSlice::new(&[0b00101000, 0b11011111]);
-    /// 
+    ///
     /// assert_eq!(unsafe { bits.get_slice() }, &[0b00101000, 0b11011111]);
     /// ```
     #[inline]
-    pub const unsafe fn get_slice(self) -> &'s [u8] {
-        &*slice_from_raw_parts(self.ptr.as_ptr(), self.byte_len())
+    pub const fn get_slice(self) -> &'s [u8] {
+        // Safety: the ptr is not a dangling pointer, this is guarantee by
+        // the lifetime (if, of course, there has been no fraudulent external
+        // manipulation)
+        unsafe { &*slice_from_raw_parts(self.ptr.as_ptr(), self.byte_len()) }
     }
 
     /// This function get the n-th bit of the bits if the index is an integer (`usize`),
@@ -180,7 +230,7 @@ impl<'s> BitSlice<'s> {
     /// ```
     ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// use looky::bits::BitSlice;
     ///
@@ -209,8 +259,15 @@ impl<'s> BitSlice<'s> {
     /// ^ it's at the index 0
     /// ```
     ///
+    /// # Safety
+    /// When the method is called, the index need to be between
+    /// `0 <= index < slice.len()`.
+    ///
+    /// Or if it's a range, the bounds need to respect the previous condition
+    /// and the start need to be <= to the end.
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// use looky::bits::BitSlice;
     ///
@@ -231,6 +288,7 @@ impl<'s> BitSlice<'s> {
     /// let bits = BitSlice::new(&[0b00101000, 0b11011111]);
     ///
     /// unsafe { bits.get_unchecked(20..60) };
+    /// unsafe { bits.get_unchecked(2..1) };
     /// ```
     #[inline]
     pub unsafe fn get_unchecked<I: SliceIndex<Self>>(self, index: I) -> I::Output {
@@ -239,8 +297,12 @@ impl<'s> BitSlice<'s> {
 
     /// Returns the `index` bytes, if it's in bounts, otherwise it panics.
     ///
+    /// # Safety
+    /// When the method is called, the index need to be between
+    /// `0 <= index < slice.byte_len()`.
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// use looky::bits::BitSlice;
     ///
@@ -270,7 +332,7 @@ impl<'s> BitSlice<'s> {
     /// Returns the `index` bytes, if it's out of bounts, it will return `None`.
     ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// use looky::bits::BitSlice;
     ///
@@ -338,7 +400,7 @@ impl<'s, 's2> PartialEq<BitSlice<'s2>> for BitSlice<'s> {
             }
         }
 
-        return true;
+        true
     }
 }
 
@@ -348,7 +410,7 @@ impl<'s> fmt::Debug for BitSlice<'s> {
     /// Print in debug mode the bits.
     ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// use looky::bits::BitSlice;
     ///
