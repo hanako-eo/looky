@@ -4,3 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+ptr_meta = "0.3"
+static_assertions = "1.1"

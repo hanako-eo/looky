@@ -1,31 +1,17 @@
 use core::fmt;
-use core::marker::PhantomData;
-use core::ptr::{slice_from_raw_parts, NonNull};
 
 use crate::slice::SliceIndex;
 use crate::utils::minimal_bytes_size;
 
+use super::metadata::{half_usize, Metadata};
+
 /// BitSlice works like a fat pointer, it describes a byte slice (perhaps seen
 /// as equivalent to a `&[u8]`) but its purpose is to allow bit-by-bit manipulation
 /// of the array.
-///
-/// Like other pointer or ref, it can be copy (the heaviest part of the copy will
-/// be in the metadata copy).
-#[derive(Clone, Copy)]
-pub struct BitSlice<'s> {
-    ptr: NonNull<u8>,
-    metadata: Metadata,
+pub struct BitSlice([u8]);
 
-    phantom: PhantomData<&'s ()>,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct Metadata {
-    pub(crate) size: usize,
-    pub(crate) bit_offset: u8,
-}
-
-impl<'s> BitSlice<'s> {
+// TODO: add more constructor of `&mut BitSlice`
+impl BitSlice {
     /// Create a bit slice from a slice.
     ///
     /// # Example
@@ -36,8 +22,27 @@ impl<'s> BitSlice<'s> {
     /// let bits = BitSlice::new(&[0b10101010]);
     /// ```
     #[inline]
-    pub fn new<S: AsRef<[u8]> + ?Sized>(slice: &'s S) -> Self {
+    #[must_use]
+    pub fn new<S: AsRef<[u8]> + ?Sized>(slice: &S) -> &Self {
         Self::with_offset(0, slice)
+    }
+
+    /// Create a mutable bit slice from a slice.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use looky::bits::BitSlice;
+    ///
+    /// let bits = BitSlice::from_mut(&mut [0b10101010]);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn from_mut<S: AsMut<[u8]> + ?Sized>(slice: &mut S) -> &mut Self {
+        let slice = slice.as_mut();
+
+        // SAFETY: all args are checked before
+        unsafe { Self::from_raw_mut(0, slice.len() * 8, slice.as_mut_ptr()) }
     }
 
     /// Create a bit slice from a slice with a custom offset on the first byte.
@@ -51,7 +56,8 @@ impl<'s> BitSlice<'s> {
     /// //                                        ^ for the BitSlice the first bit is now here
     /// ```
     #[inline]
-    pub fn with_offset<S: AsRef<[u8]> + ?Sized>(bit_offset: u8, slice: &'s S) -> Self {
+    #[must_use]
+    pub fn with_offset<S: AsRef<[u8]> + ?Sized>(bit_offset: u8, slice: &S) -> &Self {
         let slice = slice.as_ref();
 
         Self::with_size_and_offset(
@@ -70,10 +76,11 @@ impl<'s> BitSlice<'s> {
     /// use looky::bits::BitSlice;
     ///
     /// let bits = BitSlice::with_size(4, &[0b10101010]);
-    /// //                                         ^ for the BitSlice the last bit of the slice is here
+    /// //                                        ^ for the BitSlice the last bit of the slice is here
     /// ```
     #[inline]
-    pub fn with_size<S: AsRef<[u8]> + ?Sized>(size: usize, slice: &'s S) -> Self {
+    #[must_use]
+    pub fn with_size<S: AsRef<[u8]> + ?Sized>(size: usize, slice: &S) -> &Self {
         Self::with_size_and_offset(0, size, slice)
     }
 
@@ -81,11 +88,12 @@ impl<'s> BitSlice<'s> {
     /// Refer to [`Self::with_size`] and [`Self::with_offset`] to understand
     /// the meaning of size and offset.
     #[inline]
+    #[must_use]
     pub fn with_size_and_offset<S: AsRef<[u8]> + ?Sized>(
         bit_offset: u8,
         size: usize,
-        slice: &'s S,
-    ) -> Self {
+        slice: &S,
+    ) -> &Self {
         let slice = slice.as_ref();
 
         debug_assert!(bit_offset < 8 && size + bit_offset as usize <= slice.len() * 8);
@@ -94,69 +102,89 @@ impl<'s> BitSlice<'s> {
         unsafe { Self::from_raw(bit_offset, size, slice.as_ptr()) }
     }
 
-    /// Create a bit slice from a pointer to the "first byte" with a custom
+    /// Create an immutable bit slice from a pointer to the "first byte" with a
+    /// custom size and offet.
+    /// Refer to [`Self::with_size`] and [`Self::with_offset`] to understand
+    /// the meaning of size and offset.
+    ///
+    /// # Safety
+    /// When the method is called, the pointer must not be a dangling pointer.
+    #[inline]
+    #[must_use]
+    pub unsafe fn from_raw<'s>(bit_offset: u8, size: usize, ptr: *const u8) -> &'s Self {
+        from_raw_parts(ptr, size as half_usize, bit_offset)
+    }
+
+    /// Create a mutable bit slice from a pointer to the "first byte" with a custom
     /// size and offet.
     /// Refer to [`Self::with_size`] and [`Self::with_offset`] to understand
     /// the meaning of size and offset.
     ///
     /// # Safety
-    /// When the method is called, the pointer must not be a dangling pointer.  
-    #[inline]
-    pub unsafe fn from_raw(bit_offset: u8, size: usize, ptr: *const u8) -> Self {
-        Self {
-            metadata: Metadata { bit_offset, size },
-            ptr: unsafe { NonNull::new_unchecked(ptr as _) },
-
-            phantom: PhantomData,
-        }
-    }
-
-    #[inline]
-    pub fn from_mut<S: AsMut<[u8]> + ?Sized>(slice: &mut S) -> Self {
-        let slice = slice.as_mut();
-
-        Self {
-            metadata: Metadata {
-                bit_offset: 0,
-                size: slice.len() * 8,
-            },
-            ptr: unsafe { NonNull::new_unchecked(slice.as_mut_ptr()) },
-
-            phantom: PhantomData,
-        }
-    }
-
+    /// When the method is called, the pointer must not be a dangling pointer.
     #[inline]
     #[must_use]
-    pub(crate) const fn offset(self) -> u8 {
-        self.metadata.bit_offset
+    pub unsafe fn from_raw_mut<'s>(bit_offset: u8, size: usize, ptr: *mut u8) -> &'s mut Self {
+        from_raw_parts_mut(ptr, size as half_usize, bit_offset)
     }
 
+    /// Returns the metadata of the bit slice.
     #[inline]
     #[must_use]
-    pub const fn len(self) -> usize {
-        self.metadata.size
+    pub(crate) const fn metadata(&self) -> Metadata {
+        ptr_meta::metadata(self)
     }
 
+    /// Returns the start offset, i.e. the shift who bind for example the 3rd
+    /// bit to the index 0.
     #[inline]
     #[must_use]
-    pub const fn byte_len(self) -> usize {
+    pub const fn offset(&self) -> u8 {
+        self.metadata().bit_offset
+    }
+
+    /// Returns the number of bits handled by the slice
+    #[inline]
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.metadata().size as usize
+    }
+
+    /// Returns the number of bytes use byte the slice.
+    ///
+    /// # Note
+    ///
+    /// The number of bits given by [`len`] can be `N` bytes, but the function can
+    /// return `N + 1` or `N + 2`. To understand this, you need to take into account
+    /// the notion of slice offset. (explain here [`offset`])
+    #[inline]
+    #[must_use]
+    pub const fn byte_len(&self) -> usize {
         minimal_bytes_size(self.len() + self.offset() as usize)
     }
 
+    /// Check is the slice is empty.
     #[inline]
     #[must_use]
-    pub const fn is_empty(self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Returns the first bit of the slice, or `None` if it is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use looky::bits::BitSlice;
+    ///
+    /// let bits = BitSlice::new(&[0b10101010, 0b00000000]);
+    /// assert_eq!(bits.first_bit(), Some(true))
+    /// ```
     #[inline]
     #[must_use]
-    pub const fn first_bit(self) -> Option<bool> {
+    pub const fn first_bit(&self) -> Option<bool> {
         match self.is_empty() {
-            false => {
-                Some(unsafe { (*self.ptr.as_ref() & (1 << (7 - self.metadata.bit_offset))) != 0 })
-            }
+            false => Some((self.0[0] & (1 << (7 - self.offset()))) != 0),
             true => None,
         }
     }
@@ -166,17 +194,16 @@ impl<'s> BitSlice<'s> {
     /// # Examples
     ///
     /// ```
-    /// let v = [10, 40, 30];
-    /// assert_eq!(Some(&10), v.first());
+    /// use looky::bits::BitSlice;
     ///
-    /// let w: &[i32] = &[];
-    /// assert_eq!(None, w.first());
+    /// let bits = BitSlice::new(&[0b10101010, 0b00000000]);
+    /// assert_eq!(bits.first_byte(), Some(0b10101010))
     /// ```
     #[inline]
     #[must_use]
-    pub const fn first_byte(self) -> Option<u8> {
+    pub const fn first_byte(&self) -> Option<u8> {
         match self.is_empty() {
-            false => Some(unsafe { *self.ptr.as_ref() }),
+            false => Some(self.0[0]),
             true => None,
         }
     }
@@ -193,14 +220,12 @@ impl<'s> BitSlice<'s> {
     /// Modifying the container referenced by this slice may cause its buffer
     /// to be reallocated, which would also make any pointers to it invalid.
     #[inline]
-    pub const fn as_ptr(self) -> *const u8 {
-        self.ptr.as_ptr()
+    #[must_use]
+    pub const fn as_ptr(&self) -> *const u8 {
+        &self.0 as *const [u8] as *const u8
     }
 
     /// Get the origin slice store in the bit slice.
-    ///
-    /// # Safety
-    /// When calling
     ///
     /// # Examples
     ///
@@ -209,14 +234,14 @@ impl<'s> BitSlice<'s> {
     ///
     /// let bits = BitSlice::new(&[0b00101000, 0b11011111]);
     ///
-    /// assert_eq!(unsafe { bits.get_slice() }, &[0b00101000, 0b11011111]);
+    /// assert_eq!(bits.get_slice(), &[0b00101000, 0b11011111]);
     /// ```
     #[inline]
-    pub const fn get_slice(self) -> &'s [u8] {
-        // Safety: the ptr is not a dangling pointer, this is guarantee by
-        // the lifetime (if, of course, there has been no fraudulent external
-        // manipulation)
-        unsafe { &*slice_from_raw_parts(self.ptr.as_ptr(), self.byte_len()) }
+    #[must_use]
+    pub const fn get_slice(&self) -> &[u8] {
+        // SAFETY: the resulting pointer can only a dangling pointer if the pointer
+        // get with the method is a dangling pointer itself.
+        unsafe { &*core::ptr::slice_from_raw_parts(self.as_ptr(), self.byte_len()) }
     }
 
     /// This function get the n-th bit of the bits if the index is an integer (`usize`),
@@ -245,7 +270,8 @@ impl<'s> BitSlice<'s> {
     /// //                                                            retrieve here ^^^^
     /// ```
     #[inline]
-    pub fn get<I: SliceIndex<Self>>(self, index: I) -> Option<I::Output> {
+    #[must_use]
+    pub fn get<'s, I: SliceIndex<&'s Self>>(&'s self, index: I) -> Option<I::Output> {
         index.get(self)
     }
 
@@ -291,7 +317,8 @@ impl<'s> BitSlice<'s> {
     /// unsafe { bits.get_unchecked(2..1) };
     /// ```
     #[inline]
-    pub unsafe fn get_unchecked<I: SliceIndex<Self>>(self, index: I) -> I::Output {
+    #[must_use]
+    pub unsafe fn get_unchecked<'s, I: SliceIndex<&'s Self>>(&'s self, index: I) -> I::Output {
         index.get_unchecked(self)
     }
 
@@ -320,13 +347,15 @@ impl<'s> BitSlice<'s> {
     /// // try to get the third byte but panic
     /// unsafe { bits.get_byte_unchecked(2) };
     /// ```
-    pub unsafe fn get_byte_unchecked(self, index: usize) -> u8 {
+    #[inline]
+    #[must_use]
+    pub unsafe fn get_byte_unchecked(&self, index: usize) -> u8 {
         assert!(
             index < self.byte_len(),
             "BitSlice::get_byte_unchecked requires that the index is within the slice"
         );
 
-        *self.ptr.add(index).as_ref()
+        self.0[index]
     }
 
     /// Returns the `index` bytes, if it's out of bounts, it will return `None`.
@@ -350,29 +379,32 @@ impl<'s> BitSlice<'s> {
     /// // try to get the third byte
     /// assert_eq!(bits.get_byte(2), None);
     /// ```
-    pub fn get_byte(self, index: usize) -> Option<u8> {
+    #[inline]
+    #[must_use]
+    pub fn get_byte(&self, index: usize) -> Option<u8> {
         (index < self.byte_len()).then(|| unsafe { self.get_byte_unchecked(index) })
     }
 }
 
-impl<'s> From<&'s [u8]> for BitSlice<'s> {
+impl<'s> From<&'s [u8]> for &'s BitSlice {
     #[inline]
     fn from(slice: &'s [u8]) -> Self {
         BitSlice::new(slice)
     }
 }
 
-impl<'s> From<&'s mut [u8]> for BitSlice<'s> {
+impl<'s> From<&'s mut [u8]> for &'s mut BitSlice {
     #[inline]
     fn from(slice: &'s mut [u8]) -> Self {
         BitSlice::from_mut(slice)
     }
 }
 
-impl<'s> IntoIterator for BitSlice<'s> {
+impl<'s> IntoIterator for &'s BitSlice {
     type IntoIter = super::Iter<'s>;
     type Item = <Self::IntoIter as Iterator>::Item;
 
+    #[inline]
     fn into_iter(self) -> Self::IntoIter {
         super::Iter {
             slice: self,
@@ -381,14 +413,14 @@ impl<'s> IntoIterator for BitSlice<'s> {
     }
 }
 
-impl<'s, 's2> PartialEq<BitSlice<'s2>> for BitSlice<'s> {
-    fn eq(&self, other: &BitSlice<'s2>) -> bool {
+impl PartialEq<BitSlice> for BitSlice {
+    fn eq(&self, other: &BitSlice) -> bool {
         if self.len() != other.len() {
             return false;
         }
 
         // seem to look like "a == a"
-        if self.offset() == other.offset() && self.ptr == other.ptr {
+        if self.offset() == other.offset() && self.as_ptr() == other.as_ptr() {
             return true;
         }
 
@@ -404,9 +436,9 @@ impl<'s, 's2> PartialEq<BitSlice<'s2>> for BitSlice<'s> {
     }
 }
 
-impl<'s> Eq for BitSlice<'s> {}
+impl Eq for BitSlice {}
 
-impl<'s> fmt::Debug for BitSlice<'s> {
+impl fmt::Debug for BitSlice {
     /// Print in debug mode the bits.
     ///
     /// # Examples
@@ -434,5 +466,55 @@ impl<'s> fmt::Debug for BitSlice<'s> {
             }
         }
         Ok(())
+    }
+}
+
+/// Creates a `&BitSlice` from a pointer and a length and an offset.
+///
+/// This function is the `BitSlice` equivalent of [`core::slice::from_raw_parts`].
+///
+/// # Safety
+/// See the safety concerns and examples of [`core::slice::from_raw_parts`].
+///
+/// The mutable version of this function is [`from_raw_parts_mut`].
+#[inline]
+#[must_use]
+pub unsafe fn from_raw_parts<'s>(ptr: *const u8, len: half_usize, offset: u8) -> &'s BitSlice {
+    // SAFETY: the caller must uphold the safety contract for `from_raw_parts`.
+    unsafe {
+        &*ptr_meta::from_raw_parts(
+            ptr as _,
+            Metadata {
+                size: len,
+                bit_offset: offset,
+            },
+        )
+    }
+}
+
+/// Creates a `&mut BitSlice` from a pointer and a length and an offset.
+///
+/// This function is the `BitSlice` equivalent of [`core::slice::from_raw_parts_mut`].
+///
+/// # Safety
+/// See the safety concerns and examples of [`core::slice::from_raw_parts_mut`].
+///
+/// The immutable version of this function is [`from_raw_parts`].
+#[inline]
+#[must_use]
+pub unsafe fn from_raw_parts_mut<'s>(
+    ptr: *mut u8,
+    len: half_usize,
+    offset: u8,
+) -> &'s mut BitSlice {
+    // SAFETY: the caller must uphold the safety contract for `from_raw_parts_mut`.
+    unsafe {
+        &mut *ptr_meta::from_raw_parts_mut::<BitSlice>(
+            ptr as _,
+            Metadata {
+                size: len,
+                bit_offset: offset,
+            },
+        )
     }
 }

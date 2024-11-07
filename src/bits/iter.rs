@@ -1,7 +1,7 @@
 use super::BitSlice;
 
 pub struct Iter<'s> {
-    pub(super) slice: BitSlice<'s>,
+    pub(super) slice: &'s BitSlice,
     pub(super) index: usize,
 }
 

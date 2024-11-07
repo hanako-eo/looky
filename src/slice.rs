@@ -14,20 +14,20 @@ pub trait SliceIndex<T: ?Sized> {
     unsafe fn get_unchecked(self, slice: T) -> Self::Output;
 }
 
-impl<'s> SliceIndex<BitSlice<'s>> for usize {
+impl<'s> SliceIndex<&'s BitSlice> for usize {
     type Output = bool;
 
     /// Returns a bool at this location, if in bounds.
     /// In the case of the locatiohn is out of bounds, it returns `None`.
     #[inline]
-    fn get(self, slice: BitSlice<'s>) -> Option<Self::Output> {
+    fn get(self, slice: &'s BitSlice) -> Option<Self::Output> {
         // SAFETY: self it's in the bounds
         (self < slice.len()).then(|| unsafe { self.get_unchecked(slice) })
     }
 
     /// Returns the output at this location, it panic if it's out of bounds.
     #[inline]
-    unsafe fn get_unchecked(self, slice: BitSlice<'s>) -> Self::Output {
+    unsafe fn get_unchecked(self, slice: &'s BitSlice) -> Self::Output {
         assert!(
             self < slice.len(),
             "<usize as SliceIndex<BitSlice>>::get_unchecked requires that the index is within the slice"
@@ -40,12 +40,12 @@ impl<'s> SliceIndex<BitSlice<'s>> for usize {
 
 // To understand the whys ans wherefors of the '+ RangeMarker' go to the
 // definition of RangeMarker.
-impl<'s, R: RangeBounds<usize> + RangeMarker> SliceIndex<BitSlice<'s>> for R {
-    type Output = BitSlice<'s>;
+impl<'s, R: RangeBounds<usize> + RangeMarker> SliceIndex<&'s BitSlice> for R {
+    type Output = &'s BitSlice;
 
     /// Retrieves the self-th bit.
     #[inline]
-    fn get(self, slice: BitSlice<'s>) -> Option<Self::Output> {
+    fn get(self, slice: &'s BitSlice) -> Option<Self::Output> {
         let start = match self.start_bound() {
             Bound::Included(index) => *index,
             Bound::Excluded(index) => index + 1,
@@ -66,7 +66,7 @@ impl<'s, R: RangeBounds<usize> + RangeMarker> SliceIndex<BitSlice<'s>> for R {
     }
 
     /// Retrieves the reference to the byte containing the self-th bit.
-    unsafe fn get_unchecked(self, slice: BitSlice<'s>) -> Self::Output {
+    unsafe fn get_unchecked(self, slice: &'s BitSlice) -> Self::Output {
         let start = match self.start_bound() {
             Bound::Included(index) => *index,
             Bound::Excluded(index) => index + 1,
