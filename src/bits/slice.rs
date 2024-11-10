@@ -1,4 +1,4 @@
-use core::fmt;
+use core::{cmp::min, fmt};
 
 use crate::slice::SliceIndex;
 use crate::utils::minimal_bytes_size;
@@ -8,7 +8,7 @@ use super::metadata::{half_usize, Metadata};
 /// BitSlice works like a fat pointer, it describes a byte slice (perhaps seen
 /// as equivalent to a `&[u8]`) but its purpose is to allow bit-by-bit manipulation
 /// of the array.
-pub struct BitSlice([u8]);
+pub struct BitSlice(pub(crate) [u8]);
 
 // TODO: add more constructor of `&mut BitSlice`
 impl BitSlice {
@@ -42,7 +42,7 @@ impl BitSlice {
         let slice = slice.as_mut();
 
         // SAFETY: all args are checked before
-        unsafe { Self::from_raw_mut(0, slice.len() * 8, slice.as_mut_ptr()) }
+        unsafe { Self::from_raw_mut(slice.as_mut_ptr(), slice.len() * 8, 0) }
     }
 
     /// Create a bit slice from a slice with a custom offset on the first byte.
@@ -99,7 +99,7 @@ impl BitSlice {
         debug_assert!(bit_offset < 8 && size + bit_offset as usize <= slice.len() * 8);
 
         // SAFETY: all args are checked before
-        unsafe { Self::from_raw(bit_offset, size, slice.as_ptr()) }
+        unsafe { Self::from_raw(slice.as_ptr(), size, bit_offset) }
     }
 
     /// Create an immutable bit slice from a pointer to the "first byte" with a
@@ -111,7 +111,7 @@ impl BitSlice {
     /// When the method is called, the pointer must not be a dangling pointer.
     #[inline]
     #[must_use]
-    pub unsafe fn from_raw<'s>(bit_offset: u8, size: usize, ptr: *const u8) -> &'s Self {
+    pub const unsafe fn from_raw<'s>(ptr: *const u8, size: usize, bit_offset: u8) -> &'s Self {
         from_raw_parts(ptr, size as half_usize, bit_offset)
     }
 
@@ -124,7 +124,7 @@ impl BitSlice {
     /// When the method is called, the pointer must not be a dangling pointer.
     #[inline]
     #[must_use]
-    pub unsafe fn from_raw_mut<'s>(bit_offset: u8, size: usize, ptr: *mut u8) -> &'s mut Self {
+    pub unsafe fn from_raw_mut<'s>(ptr: *mut u8, size: usize, bit_offset: u8) -> &'s mut Self {
         from_raw_parts_mut(ptr, size as half_usize, bit_offset)
     }
 
@@ -150,12 +150,12 @@ impl BitSlice {
         self.metadata().size as usize
     }
 
-    /// Returns the number of bytes use byte the slice.
+    /// Returns the number of bytes use by the slice.
     ///
     /// # Note
     ///
     /// The number of bits given by [`len`] can be `N` bytes, but the function can
-    /// return `N + 1` or `N + 2`. To understand this, you need to take into account
+    /// return `N + 1`. To understand this, you need to take into account
     /// the notion of slice offset. (explain here [`offset`])
     #[inline]
     #[must_use]
@@ -219,10 +219,23 @@ impl BitSlice {
     ///
     /// Modifying the container referenced by this slice may cause its buffer
     /// to be reallocated, which would also make any pointers to it invalid.
-    #[inline]
+    #[inline(always)]
     #[must_use]
     pub const fn as_ptr(&self) -> *const u8 {
         &self.0 as *const [u8] as *const u8
+    }
+
+    /// Returns an unsafe mutable pointer to the slice's buffer.
+    ///
+    /// The caller must ensure that the slice outlives the pointer this
+    /// function returns, or else it will end up dangling.
+    ///
+    /// Modifying the container referenced by this slice may cause its buffer
+    /// to be reallocated, which would also make any pointers to it invalid.
+    #[inline(always)]
+    #[must_use]
+    pub fn as_mut_ptr(&mut self) -> *mut u8 {
+        &mut self.0 as *mut [u8] as *mut u8
     }
 
     /// Get the origin slice store in the bit slice.
@@ -322,44 +335,37 @@ impl BitSlice {
         index.get_unchecked(self)
     }
 
-    /// Returns the `index` bytes, if it's in bounts, otherwise it panics.
+    /// Returns a mutable reference to an subslice depending on the (see [`get`]
+    /// to have more explanation) or `None` if the index is out of bounds.
+    #[inline]
+    #[must_use]
+    pub fn get_mut<'s, I: SliceIndex<&'s mut Self>>(&'s mut self, index: I) -> Option<I::Output> {
+        index.get(self)
+    }
+
+    /// Returns a mutable reference to an subslice depending on the (see [`get`]
+    /// to have more explanation).
     ///
     /// # Safety
     /// When the method is called, the index need to be between
-    /// `0 <= index < slice.byte_len()`.
+    /// `0 <= index < slice.len()`.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// use looky::bits::BitSlice;
-    ///
-    /// let bits = BitSlice::new(&[0b00101000, 0b11011111]);
-    ///
-    /// // try to get the second byte
-    /// assert_eq!(unsafe { bits.get_byte_unchecked(1) }, 0b11011111);
-    /// ```
-    ///
-    /// ```should_panic
-    /// use looky::bits::BitSlice;
-    ///
-    /// let bits = BitSlice::new(&[0b00101000, 0b11011111]);
-    ///
-    /// // try to get the third byte but panic
-    /// unsafe { bits.get_byte_unchecked(2) };
-    /// ```
+    /// Or if it's a range, the bounds need to respect the previous condition
+    /// and the start need to be <= to the end.
     #[inline]
     #[must_use]
-    pub unsafe fn get_byte_unchecked(&self, index: usize) -> u8 {
-        assert!(
-            index < self.byte_len(),
-            "BitSlice::get_byte_unchecked requires that the index is within the slice"
-        );
-
-        self.0[index]
+    pub unsafe fn get_unchecked_mut<'s, I: SliceIndex<&'s mut Self>>(
+        &'s mut self,
+        index: I,
+    ) -> I::Output {
+        index.get_unchecked(self)
     }
 
     /// Returns the `index` bytes, if it's out of bounts, it will return `None`.
     ///
+    /// If the byte cannot be obtained simply from the original slice, it will
+    /// try to construct it like normal numbers.
+    ///
     /// # Examples
     ///
     /// ```
@@ -368,7 +374,15 @@ impl BitSlice {
     /// let bits = BitSlice::new(&[0b00101000, 0b11011111]);
     ///
     /// // try to get the second byte
+    /// assert_eq!(bits.get_byte(0), Some(0b00101000));
     /// assert_eq!(bits.get_byte(1), Some(0b11011111));
+    ///
+    /// // the new slice will start from the first 1 in '0b00*1*01000'
+    /// let bits2 = bits.shift(2);
+    ///
+    /// assert_eq!(bits2.get_byte(0), Some(0b10100011));
+    /// assert_eq!(bits2.get_byte(1), Some(0b00011111));
+    /// //                                     ^^^^^^ reconstruct part
     /// ```
     ///
     /// ```
@@ -383,6 +397,172 @@ impl BitSlice {
     #[must_use]
     pub fn get_byte(&self, index: usize) -> Option<u8> {
         (index < self.byte_len()).then(|| unsafe { self.get_byte_unchecked(index) })
+    }
+
+    /// Returns the `index` bytes, if it's in bounts, otherwise it panics.
+    ///
+    /// If the byte cannot be obtained simply from the original slice, it will
+    /// try to construct it like normal numbers.
+    ///
+    /// # Safety
+    /// When the method is called, the index need to be between
+    /// `0 <= index < slice.byte_len()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use looky::bits::BitSlice;
+    ///
+    /// let bits = BitSlice::new(&[0b00101000, 0b11011111]);
+    ///
+    /// assert_eq!(unsafe { bits.get_byte_unchecked(0) }, 0b00101000);
+    /// // try to get the second byte
+    /// assert_eq!(unsafe { bits.get_byte_unchecked(1) }, 0b11011111);
+    ///
+    /// // the new slice will start from the first 1 in '0b00*1*01000'
+    /// let bits2 = bits.shift(2);
+    ///
+    /// assert_eq!(unsafe { bits2.get_byte_unchecked(0) }, 0b10100011);
+    /// assert_eq!(unsafe { bits2.get_byte_unchecked(1) }, 0b00011111);
+    /// //                                                     ^^^^^^ reconstruct part
+    /// ```
+    ///
+    /// ```should_panic
+    /// use looky::bits::BitSlice;
+    ///
+    /// let bits = BitSlice::new(&[0b00101000, 0b11011111]);
+    ///
+    /// // try to get the third byte but panic
+    /// unsafe { bits.get_byte_unchecked(2) };
+    /// ```
+    pub unsafe fn get_byte_unchecked(&self, index: usize) -> u8 {
+        assert!(
+            index * 8 < self.len(),
+            "BitSlice::get_byte_unchecked requires that the index is within the slice"
+        );
+
+        // check if the slice has no bit offset or if it's the last byte check it has at least 8 bits
+        if self.offset() == 0 && self.len() - index * 8 > 7 {
+            return self.0[index];
+        }
+
+        let start = index * 8;
+        let end = min(start + 8, self.len());
+
+        (start..end)
+            .map(|i| self.get_unchecked(i))
+            .fold(0, |acc, bit| acc << 1 | bit as u8)
+    }
+
+    /// Perform a shift left of the slice and reduce the len of the slice by the
+    /// same amount of the shift to avoid undefined behavior.
+    pub fn shift(&self, shift: usize) -> &Self {
+        assert!(
+            shift < self.len(),
+            "BitSlice::shift requires that the shift is within the slice"
+        );
+
+        unsafe { self.get_unchecked(shift..) }
+    }
+
+    /// Divides one slice into two at an index, returning `None` if the slice is
+    /// too short.
+    ///
+    /// If `mid ≤ len` returns a pair of slices where the first will contain all
+    /// indices from `[0, mid)` (excluding the index `mid` itself) and the
+    /// second will contain all indices from `[mid, len)` (excluding the index
+    /// `len` itself).
+    ///
+    /// Otherwise, if `mid > len`, returns `None`.
+    #[inline]
+    #[must_use]
+    pub fn split_at(&self, mid: usize) -> Option<(&Self, &Self)> {
+        (mid <= self.len()).then(|| unsafe { self.split_at_unchecked(mid) })
+    }
+
+    /// Divides one slice into two at an index, without doing bounds checking.
+    ///
+    /// The first will contain all indices from `[0, mid)` (excluding
+    /// the index `mid` itself) and the second will contain all
+    /// indices from `[mid, len)` (excluding the index `len` itself).
+    ///
+    /// For a safe alternative see [`split_at`].
+    ///
+    /// # Safety
+    ///
+    /// Calling this method with an out-of-bounds index is *[undefined behavior]*
+    /// even if the resulting reference is not used. The caller has to ensure that
+    /// `0 <= mid <= self.len()`.
+    ///
+    /// [`split_at`]: slice::split_at
+    /// [undefined behavior]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
+    #[inline]
+    #[must_use]
+    pub unsafe fn split_at_unchecked(&self, mid: usize) -> (&Self, &Self) {
+        let len = self.len();
+        assert!(
+            mid <= len,
+            "BitSlice::split_at_unchecked requires the index to be within the slice (max {len})",
+        );
+
+        (self.get_unchecked(..mid), self.get_unchecked(mid..))
+    }
+
+    /// Divides one mutable slice into two at an index, returning `None` if the
+    /// slice is too short.
+    ///
+    /// If `mid ≤ len` returns a pair of slices where the first will contain all
+    /// indices from `[0, mid)` (excluding the index `mid` itself) and the
+    /// second will contain all indices from `[mid, len)` (excluding the index
+    /// `len` itself).
+    ///
+    /// Otherwise, if `mid > len`, returns `None`.
+    #[inline]
+    #[must_use]
+    pub fn split_at_mut(&mut self, mid: usize) -> Option<(&mut Self, &mut Self)> {
+        (mid <= self.len()).then(|| unsafe { self.split_at_mut_unchecked(mid) })
+    }
+
+    /// Divides one mutable slice into two at an index, without doing bounds checking.
+    ///
+    /// The first will contain all indices from `[0, mid)` (excluding
+    /// the index `mid` itself) and the second will contain all
+    /// indices from `[mid, len)` (excluding the index `len` itself).
+    ///
+    /// For a safe alternative see [`split_at_mut`].
+    ///
+    /// # Safety
+    ///
+    /// Calling this method with an out-of-bounds index is *[undefined behavior]*
+    /// even if the resulting reference is not used. The caller has to ensure that
+    /// `0 <= mid <= self.len()`.
+    ///
+    /// [`split_at_mut`]: slice::split_at_mut
+    /// [undefined behavior]: https://doc.rust-lang.org/reference/behavior-considered-undefined.html
+    #[inline]
+    #[must_use]
+    pub unsafe fn split_at_mut_unchecked(&mut self, mid: usize) -> (&mut Self, &mut Self) {
+        let len = self.len();
+        assert!(
+            mid <= len,
+            "BitSlice::split_at_unchecked_mut requires the index to be within the slice (max {len})",
+        );
+
+        let ptr = self.as_mut_ptr();
+
+        let slice_offset = self.offset() as usize;
+        let rest_size = len.unchecked_sub(mid);
+        let mid = mid + slice_offset;
+
+        let offset_bits = (mid % 8) as u8;
+        let offset_byte = mid / 8;
+
+        // We use `from_raw_mut` instead of `get_unchecked_mut` to avoid error
+        // 'cannot borrow `*self` as mutable more than once at a time'
+        (
+            Self::from_raw_mut(ptr, mid, self.offset()),
+            Self::from_raw_mut(ptr.add(offset_byte), rest_size, offset_bits),
+        )
     }
 }
 
@@ -479,7 +659,11 @@ impl fmt::Debug for BitSlice {
 /// The mutable version of this function is [`from_raw_parts_mut`].
 #[inline]
 #[must_use]
-pub unsafe fn from_raw_parts<'s>(ptr: *const u8, len: half_usize, offset: u8) -> &'s BitSlice {
+pub const unsafe fn from_raw_parts<'s>(
+    ptr: *const u8,
+    len: half_usize,
+    offset: u8,
+) -> &'s BitSlice {
     // SAFETY: the caller must uphold the safety contract for `from_raw_parts`.
     unsafe {
         &*ptr_meta::from_raw_parts(
