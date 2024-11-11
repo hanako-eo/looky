@@ -9,13 +9,13 @@ pub enum DecodeError {
 pub trait Decode: Sized {
     const SIZE: usize;
 
-    fn decode<'s>(slice: &'s BitSlice) -> Result<Self, DecodeError>;
+    fn decode(slice: &BitSlice) -> Result<Self, DecodeError>;
 }
 
 impl<T: Decode, const N: usize> Decode for [T; N] {
     const SIZE: usize = T::SIZE * N * 8;
 
-    fn decode<'s>(slice: &'s BitSlice) -> Result<Self, DecodeError> {
+    fn decode(slice: &BitSlice) -> Result<Self, DecodeError> {
         let mut array = MaybeUninit::<[T; N]>::uninit();
         let ptr = array.as_mut_ptr() as *mut T;
 
@@ -36,10 +36,11 @@ macro_rules! decode_unsigned {
         impl Decode for $ty {
             const SIZE: usize = $size;
 
-            fn decode<'s>(slice: &'s BitSlice) -> Result<Self, DecodeError> {
+            fn decode(slice: &BitSlice) -> Result<Self, DecodeError> {
                 let mut n: $ty = 0;
                 for i in 0..=($size / 8) {
-                    n = n << 8 | (slice.get_byte(i).ok_or(DecodeError::NotEnoughSpace)? as $ty);
+                    n = n.overflowing_shl(8).0
+                        | (slice.get_byte(i).ok_or(DecodeError::NotEnoughSpace)? as $ty);
                 }
                 Ok(n)
             }
@@ -58,10 +59,11 @@ macro_rules! decode_signed {
         impl Decode for $ty {
             const SIZE: usize = $size;
 
-            fn decode<'s>(slice: &'s BitSlice) -> Result<Self, DecodeError> {
+            fn decode(slice: &BitSlice) -> Result<Self, DecodeError> {
                 let mut n: $ty = 0;
                 for i in 0..=($size / 8) {
-                    n = n << 8 | (slice.get_byte(i).ok_or(DecodeError::NotEnoughSpace)? as $ty);
+                    n = n.overflowing_shl(8).0
+                        | (slice.get_byte(i).ok_or(DecodeError::NotEnoughSpace)? as $ty);
                 }
                 Ok(n)
             }

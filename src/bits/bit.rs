@@ -1,6 +1,6 @@
 use core::fmt;
 
-/// Represent a immutable ref of a bit from a ref a byte 
+/// Represent a immutable ref of a bit from a ref a byte
 #[derive(Clone, Copy)]
 pub struct Bit<'b> {
     byte: &'b u8,
