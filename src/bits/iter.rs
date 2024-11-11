@@ -1,4 +1,4 @@
-use super::BitSlice;
+use super::{Bit, BitSlice};
 
 pub struct Iter<'s> {
     pub(super) slice: &'s BitSlice,
@@ -6,7 +6,7 @@ pub struct Iter<'s> {
 }
 
 impl<'s> Iterator for Iter<'s> {
-    type Item = bool;
+    type Item = Bit;
 
     // TODO: try to improuve it a little bit ?
     fn next(&mut self) -> Option<Self::Item> {

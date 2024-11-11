@@ -1,6 +1,6 @@
 use core::ops::{Bound, RangeBounds};
 
-use crate::bits::BitSlice;
+use crate::bits::{Bit, BitSlice, MutableBit};
 use crate::marker::RangeMarker;
 
 pub trait SliceIndex<T: ?Sized> {
@@ -15,7 +15,7 @@ pub trait SliceIndex<T: ?Sized> {
 }
 
 impl<'s> SliceIndex<&'s BitSlice> for usize {
-    type Output = bool;
+    type Output = Bit;
 
     /// Returns a bool at this location, if in bounds.
     /// In the case of the locatiohn is out of bounds, it returns `None`.
@@ -34,7 +34,7 @@ impl<'s> SliceIndex<&'s BitSlice> for usize {
         );
 
         let index = self + slice.offset() as usize;
-        slice.0[index / 8] & (1 << (7 - index % 8)) != 0
+        Bit::new(&slice.0[index / 8], (index % 8) as u8)
     }
 }
 
@@ -103,6 +103,30 @@ impl<'s, R: RangeBounds<usize> + RangeMarker> SliceIndex<&'s BitSlice> for R {
         let offset_byte = start / 8;
 
         BitSlice::from_raw(slice.as_ptr().add(offset_byte), size, offset_bits)
+    }
+}
+
+impl<'s> SliceIndex<&'s mut BitSlice> for usize {
+    type Output = MutableBit;
+
+    /// Returns a bool at this location, if in bounds.
+    /// In the case of the locatiohn is out of bounds, it returns `None`.
+    #[inline]
+    fn get(self, slice: &'s mut BitSlice) -> Option<Self::Output> {
+        // SAFETY: self it's in the bounds
+        (self < slice.len()).then(|| unsafe { self.get_unchecked(slice) })
+    }
+
+    /// Returns the output at this location, it panic if it's out of bounds.
+    #[inline]
+    unsafe fn get_unchecked(self, slice: &'s mut BitSlice) -> Self::Output {
+        assert!(
+            self < slice.len(),
+            "<usize as SliceIndex<BitSlice>>::get_unchecked requires that the index is within the slice"
+        );
+
+        let index = self + slice.offset() as usize;
+        MutableBit::new(&mut slice.0[index / 8], (index % 8) as u8)
     }
 }
 
@@ -182,11 +206,11 @@ mod tests {
     fn get_correctly_the_n_th_bit() {
         let bits = BitSlice::new(&[0b00100000, 0b11011111]);
 
-        assert_eq!(bits.get(2), Some(true));
-        assert_eq!(bits.get(10), Some(false));
+        assert_eq!(bits.get(2).map(Bit::value), Some(true));
+        assert_eq!(bits.get(10).map(Bit::value), Some(false));
 
+        assert_ne!(bits.get(1).map(Bit::value), Some(true));
         assert_eq!(bits.get(20), None);
-        assert_ne!(bits.get(1), Some(true));
     }
 
     #[test]
@@ -212,16 +236,16 @@ mod tests {
                 &[0b00_100000, 0b11_100000]
             ))
         );
-        // assert_eq!(
-        //     bits.get(2..12),
-        //     Some(BitSlice::with_size_and_offset(
-        //         2,
-        //         10,
-        //         &[0b00_100000, 0b1101_0000]
-        //     ))
-        // );
-        // assert_eq!(bits.get(2..20), None);
-        // assert_eq!(bits.get(20..), None);
-        // assert_eq!(bits.get(..20), None);
+        assert_eq!(
+            bits.get(2..12),
+            Some(BitSlice::with_size_and_offset(
+                2,
+                10,
+                &[0b00_100000, 0b1101_0000]
+            ))
+        );
+        assert_eq!(bits.get(2..20), None);
+        assert_eq!(bits.get(20..), None);
+        assert_eq!(bits.get(..20), None);
     }
 }

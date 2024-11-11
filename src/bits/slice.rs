@@ -4,6 +4,7 @@ use crate::slice::SliceIndex;
 use crate::utils::minimal_bytes_size;
 
 use super::metadata::{half_usize, Metadata};
+use super::Bit;
 
 /// BitSlice works like a fat pointer, it describes a byte slice (perhaps seen
 /// as equivalent to a `&[u8]`) but its purpose is to allow bit-by-bit manipulation
@@ -39,10 +40,7 @@ impl BitSlice {
     #[inline]
     #[must_use]
     pub fn from_mut<S: AsMut<[u8]> + ?Sized>(slice: &mut S) -> &mut Self {
-        let slice = slice.as_mut();
-
-        // SAFETY: all args are checked before
-        unsafe { Self::from_raw_mut(slice.as_mut_ptr(), slice.len() * 8, 0) }
+        Self::with_offset_mut(0, slice)
     }
 
     /// Create a bit slice from a slice with a custom offset on the first byte.
@@ -68,6 +66,29 @@ impl BitSlice {
         )
     }
 
+    /// Create a mutable bit slice from a slice with a custom offset on the first byte.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use looky::bits::BitSlice;
+    ///
+    /// let bits = BitSlice::with_offset_mut(2, &mut [0b10101010]);
+    /// //                                                ^ for the BitSlice the first bit is now here
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_offset_mut<S: AsMut<[u8]> + ?Sized>(bit_offset: u8, slice: &mut S) -> &mut Self {
+        let slice = slice.as_mut();
+
+        Self::with_size_and_offset_mut(
+            bit_offset,
+            // we need to do - bit_offset to avoid to leave the base slice
+            slice.len() * 8 - bit_offset as usize,
+            slice,
+        )
+    }
+
     /// Create a bit slice from a slice with a custom size.
     ///
     /// # Example
@@ -82,6 +103,22 @@ impl BitSlice {
     #[must_use]
     pub fn with_size<S: AsRef<[u8]> + ?Sized>(size: usize, slice: &S) -> &Self {
         Self::with_size_and_offset(0, size, slice)
+    }
+
+    /// Create a bit mutable slice from a slice with a custom size.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use looky::bits::BitSlice;
+    ///
+    /// let bits = BitSlice::with_size_mut(4, &mut [0b10101010]);
+    /// //                                                ^ for the BitSlice the last bit of the slice is here
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_size_mut<S: AsMut<[u8]> + ?Sized>(size: usize, slice: &mut S) -> &mut Self {
+        Self::with_size_and_offset_mut(0, size, slice)
     }
 
     /// Create a bit slice from a slice with a custom size and offet.
@@ -100,6 +137,24 @@ impl BitSlice {
 
         // SAFETY: all args are checked before
         unsafe { Self::from_raw(slice.as_ptr(), size, bit_offset) }
+    }
+
+    /// Create a mutable bit slice from a slice with a custom size and offet.
+    /// Refer to [`Self::with_size_mut`] and [`Self::with_offset_mut`] to understand
+    /// the meaning of size and offset.
+    #[inline]
+    #[must_use]
+    pub fn with_size_and_offset_mut<S: AsMut<[u8]> + ?Sized>(
+        bit_offset: u8,
+        size: usize,
+        slice: &mut S,
+    ) -> &mut Self {
+        let slice = slice.as_mut();
+
+        debug_assert!(bit_offset < 8 && size + bit_offset as usize <= slice.len() * 8);
+
+        // SAFETY: all args are checked before
+        unsafe { Self::from_raw_mut(slice.as_mut_ptr(), size, bit_offset) }
     }
 
     /// Create an immutable bit slice from a pointer to the "first byte" with a
@@ -270,17 +325,17 @@ impl BitSlice {
     /// # Examples
     ///
     /// ```
-    /// use looky::bits::BitSlice;
+    /// use looky::bits::{Bit, BitSlice};
     ///
     /// let bits = BitSlice::new(&[0b00101000, 0b11011111]);
     /// // try to get [0b00101000, 0b11011111]
     /// //                 ^ this bit
-    /// assert_eq!(bits.get(2), Some(true));
+    /// assert_eq!(bits.get(2).map(Bit::value), Some(true));
     ///
     /// // try to get [0b00101000, 0b11011111]
     /// //                 ^^^^ this range of bits
     /// assert_eq!(bits.get(2..6), Some(BitSlice::with_size_and_offset(2, 4, &[0b00_1010_00])));
-    /// //                                                            retrieve here ^^^^
+    /// //                                                                    retrieve here ^^^^
     /// ```
     #[inline]
     #[must_use]
@@ -335,16 +390,33 @@ impl BitSlice {
         index.get_unchecked(self)
     }
 
-    /// Returns a mutable reference to an subslice depending on the (see [`get`]
-    /// to have more explanation) or `None` if the index is out of bounds.
+    /// Returns a mutable reference to a bit or subslice depending on the
+    /// type of index (see [`get`]) or `None` if the index is out of bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use looky::bits::{BitSlice, MutableBit};
+    ///
+    /// let mut base = [0b00101000, 0b11011111];
+    /// let bits = BitSlice::from_mut(&mut base);
+    /// // try to get [0b00101000, 0b11011111]
+    /// //                 ^ this bit
+    /// assert_eq!(bits.get_mut(2).map(MutableBit::value), Some(true));
+    ///
+    /// // try to get [0b00101000, 0b11011111]
+    /// //                 ^^^^ this range of bits
+    /// assert_eq!(bits.get_mut(2..6), Some(BitSlice::with_size_and_offset_mut(2, 4, &mut [0b00_1010_00])));
+    /// //                                                                        retrieve here ^^^^
+    /// ```
     #[inline]
     #[must_use]
     pub fn get_mut<'s, I: SliceIndex<&'s mut Self>>(&'s mut self, index: I) -> Option<I::Output> {
         index.get(self)
     }
 
-    /// Returns a mutable reference to an subslice depending on the (see [`get`]
-    /// to have more explanation).
+    /// Returns a mutable reference to a bit or subslice depending on the
+    /// (see [`get`]).
     ///
     /// # Safety
     /// When the method is called, the index need to be between
@@ -352,9 +424,36 @@ impl BitSlice {
     ///
     /// Or if it's a range, the bounds need to respect the previous condition
     /// and the start need to be <= to the end.
+    /// 
+    /// # Examples
+    ///
+    /// ```
+    /// use looky::bits::BitSlice;
+    ///
+    /// let mut base = [0b00101000, 0b11011111];
+    /// let bits = BitSlice::from_mut(&mut base);
+    /// // try to get [0b00101000, 0b11011111]
+    /// //                 ^ this bit
+    /// assert_eq!(unsafe { bits.get_mut_unchecked(2) }, true);
+    ///
+    /// // try to get [0b00101000, 0b11011111]
+    /// //                 ^^^^ this range of bits
+    /// assert_eq!(unsafe { bits.get_mut_unchecked(2..6) }, BitSlice::with_size_and_offset_mut(2, 4, &mut [0b00_1010_00]));
+    /// //                                                                                        retrieve here ^^^^
+    /// ```
+    ///
+    /// ```should_panic
+    /// use looky::bits::BitSlice;
+    ///
+    /// let mut base = [0b00101000, 0b11011111];
+    /// let bits = BitSlice::from_mut(&mut base);
+    ///
+    /// unsafe { bits.get_mut_unchecked(20..60) };
+    /// unsafe { bits.get_mut_unchecked(2..1) };
+    /// ```
     #[inline]
     #[must_use]
-    pub unsafe fn get_unchecked_mut<'s, I: SliceIndex<&'s mut Self>>(
+    pub unsafe fn get_mut_unchecked<'s, I: SliceIndex<&'s mut Self>>(
         &'s mut self,
         index: I,
     ) -> I::Output {
@@ -451,7 +550,7 @@ impl BitSlice {
 
         (start..end)
             .map(|i| self.get_unchecked(i))
-            .fold(0, |acc, bit| acc << 1 | bit as u8)
+            .fold(0, |acc, bit| acc << 1 | bit.value() as u8)
     }
 
     /// Perform a shift left of the slice and reduce the len of the slice by the
@@ -545,7 +644,7 @@ impl BitSlice {
         let len = self.len();
         assert!(
             mid <= len,
-            "BitSlice::split_at_unchecked_mut requires the index to be within the slice (max {len})",
+            "BitSlice::split_at_mut_unchecked requires the index to be within the slice (max {len})",
         );
 
         let ptr = self.as_mut_ptr();
@@ -557,7 +656,7 @@ impl BitSlice {
         let offset_bits = (mid % 8) as u8;
         let offset_byte = mid / 8;
 
-        // We use `from_raw_mut` instead of `get_unchecked_mut` to avoid error
+        // We use `from_raw_mut` instead of `get_mut_unchecked` to avoid error
         // 'cannot borrow `*self` as mutable more than once at a time'
         (
             Self::from_raw_mut(ptr, mid, self.offset()),
@@ -631,18 +730,18 @@ impl fmt::Debug for BitSlice {
     /// assert_eq!(format!("{:?}", bits), String::from("0b10011001_01100110_11110000_00001111"));
     /// ```
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_empty() {
-            return write!(f, "0b0");
+        let mut it = self.into_iter().enumerate();
+
+        match it.next() {
+            None => return write!(f, "0b0"),
+            Some((_, bit)) => write!(f, "0b{bit}")?
         }
 
-        for (i, bit) in self.into_iter().enumerate() {
-            let c = if bit { '1' } else { '0' };
-            if i == 0 {
-                write!(f, "0b{c}")?;
-            } else if i % 8 == 0 {
-                write!(f, "_{c}")?;
+        for (i, bit) in it {
+            if i % 8 == 0 {
+                write!(f, "_{bit}")?;
             } else {
-                write!(f, "{c}")?;
+                write!(f, "{bit}")?;
             }
         }
         Ok(())
