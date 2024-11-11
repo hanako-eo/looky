@@ -15,7 +15,7 @@ pub trait SliceIndex<T: ?Sized> {
 }
 
 impl<'s> SliceIndex<&'s BitSlice> for usize {
-    type Output = Bit;
+    type Output = Bit<'s>;
 
     /// Returns a bool at this location, if in bounds.
     /// In the case of the locatiohn is out of bounds, it returns `None`.
@@ -34,7 +34,7 @@ impl<'s> SliceIndex<&'s BitSlice> for usize {
         );
 
         let index = self + slice.offset() as usize;
-        Bit::new(&slice.0[index / 8], (index % 8) as u8)
+        Bit::new(&slice.0[index / 8], 7 - (index % 8) as u8)
     }
 }
 
@@ -107,7 +107,7 @@ impl<'s, R: RangeBounds<usize> + RangeMarker> SliceIndex<&'s BitSlice> for R {
 }
 
 impl<'s> SliceIndex<&'s mut BitSlice> for usize {
-    type Output = MutableBit;
+    type Output = MutableBit<'s>;
 
     /// Returns a bool at this location, if in bounds.
     /// In the case of the locatiohn is out of bounds, it returns `None`.
@@ -126,7 +126,7 @@ impl<'s> SliceIndex<&'s mut BitSlice> for usize {
         );
 
         let index = self + slice.offset() as usize;
-        MutableBit::new(&mut slice.0[index / 8], (index % 8) as u8)
+        MutableBit::new(&mut slice.0[index / 8], 7 - (index % 8) as u8)
     }
 }
 
@@ -206,10 +206,10 @@ mod tests {
     fn get_correctly_the_n_th_bit() {
         let bits = BitSlice::new(&[0b00100000, 0b11011111]);
 
-        assert_eq!(bits.get(2).map(Bit::value), Some(true));
-        assert_eq!(bits.get(10).map(Bit::value), Some(false));
+        assert_eq!(bits.get(2).map(|b| b.value()), Some(true));
+        assert_eq!(bits.get(10).map(|b| b.value()), Some(false));
 
-        assert_ne!(bits.get(1).map(Bit::value), Some(true));
+        assert_ne!(bits.get(1).map(|b| b.value()), Some(true));
         assert_eq!(bits.get(20), None);
     }
 

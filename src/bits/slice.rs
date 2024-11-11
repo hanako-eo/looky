@@ -4,7 +4,6 @@ use crate::slice::SliceIndex;
 use crate::utils::minimal_bytes_size;
 
 use super::metadata::{half_usize, Metadata};
-use super::Bit;
 
 /// BitSlice works like a fat pointer, it describes a byte slice (perhaps seen
 /// as equivalent to a `&[u8]`) but its purpose is to allow bit-by-bit manipulation
@@ -330,7 +329,7 @@ impl BitSlice {
     /// let bits = BitSlice::new(&[0b00101000, 0b11011111]);
     /// // try to get [0b00101000, 0b11011111]
     /// //                 ^ this bit
-    /// assert_eq!(bits.get(2).map(Bit::value), Some(true));
+    /// assert_eq!(bits.get(2).map(|b| b.value()), Some(true));
     ///
     /// // try to get [0b00101000, 0b11011111]
     /// //                 ^^^^ this range of bits
@@ -402,7 +401,7 @@ impl BitSlice {
     /// let bits = BitSlice::from_mut(&mut base);
     /// // try to get [0b00101000, 0b11011111]
     /// //                 ^ this bit
-    /// assert_eq!(bits.get_mut(2).map(MutableBit::value), Some(true));
+    /// assert_eq!(bits.get_mut(2).map(|b| b.value()), Some(true));
     ///
     /// // try to get [0b00101000, 0b11011111]
     /// //                 ^^^^ this range of bits
@@ -424,7 +423,7 @@ impl BitSlice {
     ///
     /// Or if it's a range, the bounds need to respect the previous condition
     /// and the start need to be <= to the end.
-    /// 
+    ///
     /// # Examples
     ///
     /// ```
@@ -734,7 +733,7 @@ impl fmt::Debug for BitSlice {
 
         match it.next() {
             None => return write!(f, "0b0"),
-            Some((_, bit)) => write!(f, "0b{bit}")?
+            Some((_, bit)) => write!(f, "0b{bit}")?,
         }
 
         for (i, bit) in it {

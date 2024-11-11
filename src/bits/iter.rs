@@ -6,7 +6,7 @@ pub struct Iter<'s> {
 }
 
 impl<'s> Iterator for Iter<'s> {
-    type Item = Bit;
+    type Item = Bit<'s>;
 
     // TODO: try to improuve it a little bit ?
     fn next(&mut self) -> Option<Self::Item> {
