@@ -10,3 +10,7 @@ mod fixed;
 mod iter;
 mod metadata;
 mod slice;
+
+pub mod error {
+    pub struct CopyError;
+}

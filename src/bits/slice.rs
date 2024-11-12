@@ -4,6 +4,7 @@ use crate::slice::SliceIndex;
 use crate::utils::minimal_bytes_size;
 
 use super::{
+    error::CopyError,
     iter::{Iter, IterMut},
     metadata::{half_usize, Metadata},
 };
@@ -693,6 +694,48 @@ impl BitSlice {
             Self::from_raw_mut(ptr, mid, self.offset()),
             Self::from_raw_mut(ptr.add(offset_byte), rest_size, offset_bits),
         )
+    }
+
+    /// Try to copie all bits from the slice `src` into `self`.
+    ///
+    /// If the length of `self` greater than the length of `src`, it will return `Ok`,
+    /// otherwise, it will return a [`CopyError`].
+    pub fn try_copy_from_slice(&mut self, src: &Self) -> Result<(), CopyError> {
+        if src.len() > self.len() {
+            return Err(CopyError);
+        }
+
+        self.copy_from_slice(src);
+        Ok(())
+    }
+
+    /// Copies all bits from the slice `src` into `self`.
+    /// The length of `src` must be the same as `self`.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if the two slices have different lengths.
+    pub fn copy_from_slice(&mut self, src: &Self) {
+        // The panic code path was put into a cold function to not bloat the
+        // call site.
+        #[cold]
+        #[inline(never)]
+        #[track_caller]
+        fn len_mismatch_fail(dst_len: usize, src_len: usize) -> ! {
+            panic!(
+                "source slice length ({}) is greater than the destination slice length ({})",
+                src_len, dst_len,
+            );
+        }
+
+        if src.len() > self.len() {
+            len_mismatch_fail(self.len(), src.len());
+        }
+
+        for (i, mut dest_bit) in self.iter_mut().enumerate() {
+            let src_bit = unsafe { src.get_unchecked(i) };
+            dest_bit.put(src_bit.value());
+        }
     }
 
     /// Returns an iterator over the slice.

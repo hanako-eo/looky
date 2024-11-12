@@ -8,7 +8,7 @@ use crate::{
 #[derive(Debug, PartialEq)]
 pub enum DecodeError {
     NotEnoughSpace,
-    UnmachingSizing,
+    UnmachingSize,
 }
 
 pub trait Decode: Sized {
@@ -23,10 +23,11 @@ impl<const BITS: usize, const BYTES: usize> Decode for BitArray<BITS, BYTES> {
     fn decode(slice: &BitSlice) -> Result<Self, DecodeError> {
         let mut array = BitArray::new([0; BYTES]);
 
-        for (i, mut arr_bit) in array.iter_mut().enumerate() {
-            let bit = slice.get(i).ok_or(DecodeError::UnmachingSizing)?;
-            arr_bit.put(bit.value());
-        }
+        // to be sure the slice feet the size
+        let slice = slice.get(0..BITS).ok_or(DecodeError::NotEnoughSpace)?;
+        array
+            .try_copy_from_slice(slice)
+            .map_err(|_| DecodeError::UnmachingSize)?;
 
         Ok(array)
     }
