@@ -98,19 +98,29 @@ impl<'b> MutableBit<'b> {
     /// Set the bit to 1.
     #[inline]
     pub fn set(&mut self) {
-        *self.byte |= 1 << self.index
+        *self.byte |= 1 << self.index;
     }
 
     /// Set the bit to 0.
     #[inline]
     pub fn reset(&mut self) {
-        *self.byte &= !(1 << self.index)
+        *self.byte &= !(1 << self.index);
     }
 
     /// Toggle the bit.
     #[inline]
     pub fn toggle(&mut self) {
-        *self.byte ^= 1 << self.index
+        *self.byte ^= 1 << self.index;
+    }
+
+    /// Set the bit to specific value (true for 1 and false for 0).
+    #[inline]
+    pub fn put(&mut self, value: bool) {
+        if value {
+            self.set();
+        } else {
+            self.reset();
+        }
     }
 
     /// Get the value of the bit

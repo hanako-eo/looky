@@ -3,7 +3,6 @@
 
 pub use bit::*;
 pub use fixed::BitArray;
-pub use iter::Iter;
 pub use slice::*;
 
 mod bit;

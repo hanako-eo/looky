@@ -1,9 +1,12 @@
-use core::{cmp::min, fmt};
+use core::{cmp::min, fmt, mem::MaybeUninit};
 
 use crate::slice::SliceIndex;
 use crate::utils::minimal_bytes_size;
 
-use super::metadata::{half_usize, Metadata};
+use super::{
+    iter::{Iter, IterMut},
+    metadata::{half_usize, Metadata},
+};
 
 /// BitSlice works like a fat pointer, it describes a byte slice (perhaps seen
 /// as equivalent to a `&[u8]`) but its purpose is to allow bit-by-bit manipulation
@@ -691,6 +694,20 @@ impl BitSlice {
             Self::from_raw_mut(ptr.add(offset_byte), rest_size, offset_bits),
         )
     }
+
+    /// Returns an iterator over the slice.
+    ///
+    /// The iterator yields all items from start to end.
+    pub fn iter(&self) -> Iter<'_> {
+        Iter::new(self)
+    }
+
+    /// Returns an iterator that allows modifying each bits.
+    ///
+    /// The iterator yields all items from start to end.
+    pub fn iter_mut(&mut self) -> IterMut<'_> {
+        IterMut::new(self)
+    }
 }
 
 impl<'s> From<&'s [u8]> for &'s BitSlice {
@@ -708,15 +725,12 @@ impl<'s> From<&'s mut [u8]> for &'s mut BitSlice {
 }
 
 impl<'s> IntoIterator for &'s BitSlice {
-    type IntoIter = super::Iter<'s>;
+    type IntoIter = Iter<'s>;
     type Item = <Self::IntoIter as Iterator>::Item;
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
-        super::Iter {
-            slice: self,
-            index: 0,
-        }
+        Iter::new(self)
     }
 }
 

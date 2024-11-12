@@ -1,19 +1,35 @@
 use core::mem::MaybeUninit;
 
 use crate::{
-    bits::BitSlice,
+    bits::{BitArray, BitSlice},
     utils::minimal_bytes_size,
 };
 
 #[derive(Debug, PartialEq)]
 pub enum DecodeError {
     NotEnoughSpace,
+    UnmachingSizing,
 }
 
 pub trait Decode: Sized {
     const SIZE: usize;
 
     fn decode(slice: &BitSlice) -> Result<Self, DecodeError>;
+}
+
+impl<const BITS: usize, const BYTES: usize> Decode for BitArray<BITS, BYTES> {
+    const SIZE: usize = BITS;
+
+    fn decode(slice: &BitSlice) -> Result<Self, DecodeError> {
+        let mut array = BitArray::new([0; BYTES]);
+
+        for (i, mut arr_bit) in array.iter_mut().enumerate() {
+            let bit = slice.get(i).ok_or(DecodeError::UnmachingSizing)?;
+            arr_bit.put(bit.value());
+        }
+
+        Ok(array)
+    }
 }
 
 impl<T: Decode, const N: usize> Decode for [T; N] {
@@ -108,5 +124,13 @@ mod tests {
         let n = u8x4::decode(bit);
 
         assert_eq!(n, Ok([0xDE, 0xAD, 0xBE, 0xEF]));
+    }
+
+    #[test]
+    fn decode_bitarray_from_slice() {
+        let bit = BitSlice::new(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        let n = BitArray::<16, 2>::decode(bit).unwrap();
+
+        assert_eq!(n, BitArray::new([0xDE, 0xAD]));
     }
 }
