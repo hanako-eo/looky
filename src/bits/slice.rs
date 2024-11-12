@@ -574,6 +574,35 @@ impl BitSlice {
     /// Otherwise, if `mid > len`, returns `None`.
     #[inline]
     #[must_use]
+    pub fn split_n_time<const N: usize>(&self, size: usize) -> Option<([&Self; N], &Self)> {
+        let mut array = MaybeUninit::<[&Self; N]>::uninit();
+        let ptr = array.as_mut_ptr() as *mut &Self;
+        let mut slice = self;
+
+        for i in 0..N {
+            let chunk;
+            (chunk, slice) = slice.split_at(size)?;
+            // SAFETY: `i` will not exceed N
+            unsafe {
+                ptr.add(i).write(chunk);
+            }
+        }
+
+        // SAFETY: correctly init before
+        Some((unsafe { array.assume_init() }, slice))
+    }
+
+    /// Divides one slice into two at an index, returning `None` if the slice is
+    /// too short.
+    ///
+    /// If `mid ≤ len` returns a pair of slices where the first will contain all
+    /// indices from `[0, mid)` (excluding the index `mid` itself) and the
+    /// second will contain all indices from `[mid, len)` (excluding the index
+    /// `len` itself).
+    ///
+    /// Otherwise, if `mid > len`, returns `None`.
+    #[inline]
+    #[must_use]
     pub fn split_at(&self, mid: usize) -> Option<(&Self, &Self)> {
         (mid <= self.len()).then(|| unsafe { self.split_at_unchecked(mid) })
     }

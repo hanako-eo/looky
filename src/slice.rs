@@ -80,7 +80,7 @@ impl<'s, R: RangeBounds<usize> + RangeMarker> SliceIndex<&'s BitSlice> for R {
         };
 
         assert!(
-            start < slice.len(),
+            start <= slice.len(),
             "range start index {start} out of range for slice of length {}",
             slice.len()
         );

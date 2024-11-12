@@ -1,7 +1,11 @@
 use core::mem::MaybeUninit;
 
-use crate::bits::BitSlice;
+use crate::{
+    bits::BitSlice,
+    utils::minimal_bytes_size,
+};
 
+#[derive(Debug, PartialEq)]
 pub enum DecodeError {
     NotEnoughSpace,
 }
@@ -13,16 +17,20 @@ pub trait Decode: Sized {
 }
 
 impl<T: Decode, const N: usize> Decode for [T; N] {
-    const SIZE: usize = T::SIZE * N * 8;
+    const SIZE: usize = T::SIZE * N;
 
     fn decode(slice: &BitSlice) -> Result<Self, DecodeError> {
         let mut array = MaybeUninit::<[T; N]>::uninit();
         let ptr = array.as_mut_ptr() as *mut T;
 
-        for i in 0..N {
+        let (chunks, _) = slice
+            .split_n_time::<N>(T::SIZE)
+            .ok_or(DecodeError::NotEnoughSpace)?;
+
+        for (i, chunk) in chunks.into_iter().map(T::decode).enumerate() {
             // SAFETY: `i` will not exceed N
             unsafe {
-                ptr.add(i).write(T::decode(slice)?);
+                ptr.add(i).write(chunk?);
             }
         }
 
@@ -38,7 +46,7 @@ macro_rules! decode_unsigned {
 
             fn decode(slice: &BitSlice) -> Result<Self, DecodeError> {
                 let mut n: $ty = 0;
-                for i in 0..=($size / 8) {
+                for i in 0..minimal_bytes_size($size) {
                     n = n.overflowing_shl(8).0
                         | (slice.get_byte(i).ok_or(DecodeError::NotEnoughSpace)? as $ty);
                 }
@@ -61,7 +69,7 @@ macro_rules! decode_signed {
 
             fn decode(slice: &BitSlice) -> Result<Self, DecodeError> {
                 let mut n: $ty = 0;
-                for i in 0..=($size / 8) {
+                for i in 0..minimal_bytes_size($size) {
                     n = n.overflowing_shl(8).0
                         | (slice.get_byte(i).ok_or(DecodeError::NotEnoughSpace)? as $ty);
                 }
@@ -76,3 +84,29 @@ decode_signed! { i16, 16 }
 decode_signed! { i32, 32 }
 decode_signed! { i64, 64 }
 decode_signed! { i128, 128 }
+
+#[cfg(test)]
+mod tests {
+    use crate::bits::{BitArray, BitSlice};
+
+    use super::Decode;
+
+    #[test]
+    fn decode_int_from_slice() {
+        let bit = BitSlice::new(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        let n = u32::decode(bit);
+
+        assert_eq!(n, Ok(0xDEADBEEF));
+    }
+
+    #[test]
+    fn decode_array_from_slice() {
+        #[allow(non_camel_case_types)]
+        type u8x4 = [u8; 4];
+
+        let bit = BitSlice::new(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        let n = u8x4::decode(bit);
+
+        assert_eq!(n, Ok([0xDE, 0xAD, 0xBE, 0xEF]));
+    }
+}
