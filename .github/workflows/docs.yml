@@ -8,7 +8,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
- 
+
 concurrency:
   group: deploy
   cancel-in-progress: false
@@ -35,7 +35,7 @@ jobs:
         run: cargo clean --doc
 
       - name: Build docs
-        run: cargo doc --no-deps --document-private-items
+        run: cargo doc --no-deps
 
       - name: Add redirect
         run: echo '<meta http-equiv="refresh" content="0;url=looky/index.html">' > target/doc/index.html

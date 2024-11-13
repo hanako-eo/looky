@@ -9,7 +9,9 @@ use super::{
     metadata::{half_usize, Metadata},
 };
 
-/// BitSlice works like a fat pointer, it describes a byte slice (perhaps seen
+/// `BitSlice` is a slice of bits.
+///
+/// It works like a fat pointer, it describes a byte slice (perhaps seen
 /// as equivalent to a `&[u8]`) but its purpose is to allow bit-by-bit manipulation
 /// of the array.
 pub struct BitSlice(pub(crate) [u8]);
@@ -212,9 +214,9 @@ impl BitSlice {
     ///
     /// # Note
     ///
-    /// The number of bits given by [`len`] can be `N` bytes, but the function can
-    /// return `N + 1`. To understand this, you need to take into account
-    /// the notion of slice offset. (explain here [`offset`])
+    /// The number of bits given by [`Self::len`] can be `N` bytes, but the function
+    /// can return `N + 1`. To understand this, you need to take into account
+    /// the notion of slice offset. (explain here [`Self::offset`])
     #[inline]
     #[must_use]
     pub const fn byte_len(&self) -> usize {
@@ -394,7 +396,7 @@ impl BitSlice {
     }
 
     /// Returns a mutable reference to a bit or subslice depending on the
-    /// type of index (see [`get`]) or `None` if the index is out of bounds.
+    /// type of index (see [`Self::get`]) or `None` if the index is out of bounds.
     ///
     /// # Examples
     ///
@@ -419,7 +421,7 @@ impl BitSlice {
     }
 
     /// Returns a mutable reference to a bit or subslice depending on the
-    /// (see [`get`]).
+    /// (see [`Self::get`]).
     ///
     /// # Safety
     /// When the method is called, the index need to be between
