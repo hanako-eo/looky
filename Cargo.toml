@@ -3,6 +3,10 @@ name = "looky"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+alloc = []
+default = ["alloc"]
+
 [dependencies]
 ptr_meta = "0.3"
 static_assertions = "1.1"

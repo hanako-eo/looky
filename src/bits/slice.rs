@@ -560,6 +560,8 @@ impl BitSlice {
 
     /// Perform a shift left of the slice and reduce the len of the slice by the
     /// same amount of the shift to avoid undefined behavior.
+    #[inline]
+    #[must_use]
     pub fn shift(&self, shift: usize) -> &Self {
         assert!(
             shift < self.len(),
@@ -743,6 +745,8 @@ impl BitSlice {
     /// Returns an iterator over the slice.
     ///
     /// The iterator yields all items from start to end.
+    #[inline]
+    #[must_use]
     pub fn iter(&self) -> Iter<'_> {
         Iter::new(self)
     }
@@ -750,6 +754,8 @@ impl BitSlice {
     /// Returns an iterator that allows modifying each bits.
     ///
     /// The iterator yields all items from start to end.
+    #[inline]
+    #[must_use]
     pub fn iter_mut(&mut self) -> IterMut<'_> {
         IterMut::new(self)
     }
