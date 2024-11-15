@@ -17,8 +17,6 @@ impl<'b> Bit<'b> {
     ///
     /// let n = 1;
     /// let bit = Bit::new(&n, 0);
-    ///
-    /// assert_eq!(bit.value(), true);
     /// ```
     #[inline]
     #[must_use]
@@ -27,6 +25,17 @@ impl<'b> Bit<'b> {
     }
 
     /// Get the value of the bit
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use looky::bits::Bit;
+    ///
+    /// let n = 1;
+    /// let bit = Bit::new(&n, 0);
+    ///
+    /// assert_eq!(bit.value(), true);
+    /// ```
     #[inline]
     #[must_use]
     pub fn value(&self) -> bool {
@@ -76,18 +85,10 @@ impl<'b> MutableBit<'b> {
     /// let mut bit = MutableBit::new(&mut n, 0);
     ///
     /// assert_eq!(bit.value(), true);
-    ///
     /// bit.reset();
     /// assert_eq!(bit.value(), false);
-    /// //assert_eq!(n, 0);
-    ///
-    /// bit.set();
-    /// assert_eq!(bit.value(), true);
-    ///
-    /// bit.toggle();
-    /// assert_eq!(bit.value(), false);
-    /// bit.toggle();
-    /// assert_eq!(bit.value(), true);
+    /// 
+    /// assert_eq!(n, 0);
     /// ```
     #[inline]
     #[must_use]
@@ -96,24 +97,76 @@ impl<'b> MutableBit<'b> {
     }
 
     /// Set the bit to 1.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use looky::bits::MutableBit;
+    ///
+    /// let mut n = 0;
+    /// let mut bit = MutableBit::new(&mut n, 1);
+    /// bit.set();
+    /// assert_eq!(n, 2);
+    /// ```
     #[inline]
     pub fn set(&mut self) {
         *self.byte |= 1 << self.index;
     }
 
     /// Set the bit to 0.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use looky::bits::MutableBit;
+    ///
+    /// let mut n = 4;
+    /// let mut bit = MutableBit::new(&mut n, 2);
+    /// bit.reset();
+    /// assert_eq!(n, 0);
+    /// ```
     #[inline]
     pub fn reset(&mut self) {
         *self.byte &= !(1 << self.index);
     }
 
     /// Toggle the bit.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use looky::bits::MutableBit;
+    ///
+    /// let mut n = 0;
+    /// let mut bit = MutableBit::new(&mut n, 1);
+    /// bit.toggle();
+    /// assert_eq!(n, 2);
+    ///
+    /// let mut bit = MutableBit::new(&mut n, 1);
+    /// bit.toggle();
+    /// assert_eq!(n, 0);
+    /// ```
     #[inline]
     pub fn toggle(&mut self) {
         *self.byte ^= 1 << self.index;
     }
 
     /// Set the bit to specific value (true for 1 and false for 0).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use looky::bits::MutableBit;
+    ///
+    /// let mut n = 1;
+    /// let mut bit = MutableBit::new(&mut n, 1);
+    /// bit.put(true);
+    /// assert_eq!(n, 3);
+    ///
+    /// let mut bit = MutableBit::new(&mut n, 0);
+    /// bit.put(false);
+    /// assert_eq!(n, 2);
+    /// ```
     #[inline]
     pub fn put(&mut self, value: bool) {
         if value {
@@ -124,6 +177,17 @@ impl<'b> MutableBit<'b> {
     }
 
     /// Get the value of the bit
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use looky::bits::MutableBit;
+    ///
+    /// let mut n = 1;
+    /// let bit = MutableBit::new(&mut n, 0);
+    ///
+    /// assert_eq!(bit.value(), true);
+    /// ```
     #[inline]
     #[must_use]
     pub fn value(&self) -> bool {

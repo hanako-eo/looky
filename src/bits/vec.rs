@@ -7,6 +7,8 @@ use alloc::vec::Vec;
 
 use super::{BitArray, BitSlice};
 
+/// `BitVec` is a struct for managing an vector of bits of a specified size.
+/// It works like a [`Vec`].
 #[derive(Default)]
 pub struct BitVec {
     raw: Vec<u8>,
