@@ -7,6 +7,10 @@ edition = "2021"
 alloc = []
 default = ["alloc"]
 
+[workspace]
+members = ["looky-macro"]
+
 [dependencies]
+paste = "1.0"
 ptr_meta = "0.3"
 static_assertions = "1.1"

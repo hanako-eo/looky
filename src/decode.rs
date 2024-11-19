@@ -1,9 +1,6 @@
-use core::mem::MaybeUninit;
+use paste::paste;
 
-use crate::{
-    bits::{BitArray, BitSlice},
-    utils::minimal_bytes_size,
-};
+use crate::{bits::BitArray, buffer::BitsReader};
 
 #[derive(Debug, PartialEq)]
 pub enum DecodeError {
@@ -11,107 +8,60 @@ pub enum DecodeError {
     UnmachingSize,
 }
 
-pub trait Decode: Sized {
-    const SIZE: usize;
+pub type DecodeResult<T> = core::result::Result<T, DecodeError>;
 
-    fn decode(slice: &BitSlice) -> Result<Self, DecodeError>;
+/// `Decode` is trait that represent the object that will decode
+pub trait Decode: Sized {
+    fn decode(reader: &mut BitsReader<'_>) -> DecodeResult<Self>;
 }
 
 impl<const BITS: usize, const BYTES: usize> Decode for BitArray<BITS, BYTES> {
-    const SIZE: usize = BITS;
-
-    fn decode(slice: &BitSlice) -> Result<Self, DecodeError> {
-        let mut array = BitArray::new([0; BYTES]);
-
-        // to be sure the slice feet the size
-        let slice = slice.get(0..BITS).ok_or(DecodeError::NotEnoughSpace)?;
-        array
-            .try_copy_from_slice(slice)
-            .map_err(|_| DecodeError::UnmachingSize)?;
-
-        Ok(array)
+    fn decode(reader: &mut BitsReader) -> DecodeResult<Self> {
+        reader.read_bits_array()
     }
 }
 
 impl<T: Decode, const N: usize> Decode for [T; N] {
-    const SIZE: usize = T::SIZE * N;
-
-    fn decode(slice: &BitSlice) -> Result<Self, DecodeError> {
-        let mut array = MaybeUninit::<[T; N]>::uninit();
-        let ptr = array.as_mut_ptr() as *mut T;
-
-        let (chunks, _) = slice
-            .split_n_time::<N>(T::SIZE)
-            .ok_or(DecodeError::NotEnoughSpace)?;
-
-        for (i, chunk) in chunks.into_iter().map(T::decode).enumerate() {
-            // SAFETY: `i` will not exceed N
-            unsafe {
-                ptr.add(i).write(chunk?);
-            }
-        }
-
-        // SAFETY: correctly init before
-        Ok(unsafe { array.assume_init() })
+    fn decode(reader: &mut BitsReader) -> DecodeResult<Self> {
+        reader.read_array()
     }
 }
 
-macro_rules! decode_unsigned {
-    ($ty:ty, $size:literal) => {
+macro_rules! decode_int {
+    ($($ty:ty)*) => {$(
         impl Decode for $ty {
-            const SIZE: usize = $size;
-
-            fn decode(slice: &BitSlice) -> Result<Self, DecodeError> {
-                let mut n: $ty = 0;
-                for i in 0..minimal_bytes_size($size) {
-                    n = n.overflowing_shl(8).0
-                        | (slice.get_byte(i).ok_or(DecodeError::NotEnoughSpace)? as $ty);
+            fn decode(reader: &mut BitsReader) -> DecodeResult<Self> {
+                paste! {
+                    reader.[<read_ $ty>]()
                 }
-                Ok(n)
             }
         }
-    };
+    )*};
 }
 
-decode_unsigned! { u8, 8 }
-decode_unsigned! { u16, 16 }
-decode_unsigned! { u32, 32 }
-decode_unsigned! { u64, 64 }
-decode_unsigned! { u128, 128 }
+decode_int! { u8 }
+decode_int! { u16 }
+decode_int! { u32 }
+decode_int! { u64 }
+decode_int! { u128 }
 
-macro_rules! decode_signed {
-    ($ty:ty, $size:literal) => {
-        impl Decode for $ty {
-            const SIZE: usize = $size;
-
-            fn decode(slice: &BitSlice) -> Result<Self, DecodeError> {
-                let mut n: $ty = 0;
-                for i in 0..minimal_bytes_size($size) {
-                    n = n.overflowing_shl(8).0
-                        | (slice.get_byte(i).ok_or(DecodeError::NotEnoughSpace)? as $ty);
-                }
-                Ok(n)
-            }
-        }
-    };
-}
-
-decode_signed! { i8, 8 }
-decode_signed! { i16, 16 }
-decode_signed! { i32, 32 }
-decode_signed! { i64, 64 }
-decode_signed! { i128, 128 }
+decode_int! { i8 }
+decode_int! { i16 }
+decode_int! { i32 }
+decode_int! { i64 }
+decode_int! { i128 }
 
 #[cfg(test)]
 mod tests {
     use crate::bits::{BitArray, BitSlice};
+    use crate::buffer::BitsReader;
 
     use super::Decode;
 
     #[test]
     fn decode_int_from_slice() {
-        let bit = BitSlice::new(&[0xDE, 0xAD, 0xBE, 0xEF]);
-        let n = u32::decode(bit);
+        let mut reader = BitsReader::new(BitSlice::new(&[0xDE, 0xAD, 0xBE, 0xEF]));
+        let n = u32::decode(&mut reader);
 
         assert_eq!(n, Ok(0xDEADBEEF));
     }
@@ -121,17 +71,17 @@ mod tests {
         #[allow(non_camel_case_types)]
         type u8x4 = [u8; 4];
 
-        let bit = BitSlice::new(&[0xDE, 0xAD, 0xBE, 0xEF]);
-        let n = u8x4::decode(bit);
+        let mut reader = BitsReader::new(BitSlice::new(&[0xDE, 0xAD, 0xBE, 0xEF]));
+        let n = u8x4::decode(&mut reader);
 
         assert_eq!(n, Ok([0xDE, 0xAD, 0xBE, 0xEF]));
     }
 
     #[test]
     fn decode_bitarray_from_slice() {
-        let bit = BitSlice::new(&[0xDE, 0xAD, 0xBE, 0xEF]);
-        let n = BitArray::<16, 2>::decode(bit).unwrap();
+        let mut reader = BitsReader::new(BitSlice::new(&[0xDE, 0xAD, 0xBE, 0xEF]));
+        let n = BitArray::<16, 2>::decode(&mut reader);
 
-        assert_eq!(n, BitArray::new([0xDE, 0xAD]));
+        assert_eq!(n, Ok(BitArray::new([0xDE, 0xAD])));
     }
 }

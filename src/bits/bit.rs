@@ -87,7 +87,7 @@ impl<'b> MutableBit<'b> {
     /// assert_eq!(bit.value(), true);
     /// bit.reset();
     /// assert_eq!(bit.value(), false);
-    /// 
+    ///
     /// assert_eq!(n, 0);
     /// ```
     #[inline]
