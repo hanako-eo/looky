@@ -7,8 +7,8 @@ edition = "2021"
 alloc = []
 default = ["alloc"]
 
-[workspace]
-members = ["looky-macro"]
+# [workspace]
+# members = ["looky-macro"]
 
 [dependencies]
 paste = "1.0"
